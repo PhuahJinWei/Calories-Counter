@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Calorie Tracker</title>
+  <meta name="description" content="Track daily calories and body weight. Data stays on your device.">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Calories">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <!-- ================= TODAY ================= -->
+    <section class="view" data-view="today">
+      <header class="day-nav">
+        <button class="icon-btn" id="prev-day" aria-label="Previous day">&#8249;</button>
+        <label class="day-label">
+          <span id="day-title">Today</span>
+          <span id="day-sub" class="muted small"></span>
+          <input type="date" id="day-picker" aria-label="Pick a date">
+        </label>
+        <button class="icon-btn" id="next-day" aria-label="Next day">&#8250;</button>
+      </header>
+
+      <div id="install-banner" class="banner" hidden>
+        <span>Open this from your Home Screen so your data is kept safely. Tap <b>Share</b> &rarr; <b>Add to Home Screen</b>.</span>
+      </div>
+      <div id="backup-banner" class="banner" hidden>
+        <span id="backup-banner-text">You haven't made a backup recently.</span>
+        <button class="link-btn" data-action="export-json">Back up</button>
+      </div>
+
+      <div class="card summary">
+        <div class="summary-row">
+          <div>
+            <div class="big" id="kcal-eaten">0</div>
+            <div class="muted small">kcal eaten</div>
+          </div>
+          <div class="right">
+            <div class="big" id="kcal-left">0</div>
+            <div class="muted small" id="kcal-left-label">kcal left</div>
+          </div>
+        </div>
+        <div class="bar"><div class="bar-fill" id="kcal-bar"></div></div>
+        <div class="muted small" id="kcal-goal"></div>
+      </div>
+
+      <form class="card" id="weight-form" novalidate autocomplete="off">
+        <h2>Body weight</h2>
+        <div class="row">
+          <input id="weight-input" type="text" inputmode="decimal" aria-label="Weight in kilograms" enterkeyhint="done">
+          <span class="unit">kg</span>
+          <button type="submit" class="btn" id="weight-save">Save</button>
+        </div>
+        <p class="muted small note" id="weight-note"></p>
+      </form>
+
+      <form class="card" id="food-form" novalidate autocomplete="off">
+        <h2>Add food</h2>
+        <input id="food-name" type="text" maxlength="60" placeholder="What did you eat?" aria-label="Food name" enterkeyhint="next">
+        <div class="row">
+          <input id="food-kcal" type="text" inputmode="numeric" placeholder="Calories" aria-label="Calories" enterkeyhint="done">
+          <span class="unit">kcal</span>
+          <select id="food-meal" aria-label="Meal">
+            <option>Breakfast</option>
+            <option>Lunch</option>
+            <option>Dinner</option>
+            <option>Snack</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-wide" id="food-save">Add</button>
+        <div id="recent-wrap" hidden>
+          <div class="muted small recent-label">Recent &mdash; tap to fill</div>
+          <div id="recent" class="chips"></div>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>Logged</h2>
+        <div id="food-list"></div>
+      </div>
+    </section>
+
+    <!-- ================= HISTORY ================= -->
+    <section class="view" data-view="history" hidden>
+      <h1>History</h1>
+      <div class="seg" id="range-seg" role="group" aria-label="Time range">
+        <button data-range="30" class="on">30 days</button>
+        <button data-range="90">90 days</button>
+        <button data-range="365">1 year</button>
+        <button data-range="0">All</button>
+      </div>
+      <div class="card">
+        <h2>Weight</h2>
+        <div id="weight-chart"></div>
+        <div id="history-stats" class="stats"></div>
+      </div>
+      <div class="card">
+        <h2>Daily log</h2>
+        <div id="day-list"></div>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="view" data-view="settings" hidden>
+      <h1>Settings</h1>
+      <form class="card" id="goal-form" novalidate autocomplete="off">
+        <h2>Daily calorie goal</h2>
+        <div class="row">
+          <input id="goal-input" type="text" inputmode="numeric" aria-label="Daily calorie goal" enterkeyhint="done">
+          <span class="unit">kcal</span>
+          <button type="submit" class="btn">Save</button>
+        </div>
+      </form>
+
+      <div class="card">
+        <h2>Backup &amp; restore</h2>
+        <p class="muted small">Your data is stored only on this iPhone. Export a backup regularly and choose <b>Save to Files</b> (iCloud Drive is ideal). Deleting the app from your Home Screen deletes its data.</p>
+        <p class="small" id="backup-status"></p>
+        <button class="btn btn-wide" data-action="export-json">Export backup (JSON)</button>
+        <button class="btn btn-wide btn-secondary" data-action="export-csv">Export spreadsheet (CSV)</button>
+        <button class="btn btn-wide btn-secondary" data-action="import">Restore from backup&hellip;</button>
+        <input type="file" id="import-file" accept=".json,application/json" class="visually-hidden" tabindex="-1">
+      </div>
+
+      <div class="card">
+        <h2>Storage</h2>
+        <ul class="kv" id="storage-info"></ul>
+      </div>
+
+      <div class="card" id="install-card" hidden>
+        <h2>Install on your iPhone</h2>
+        <ol class="small steps">
+          <li>Open this page in <b>Safari</b>.</li>
+          <li>Tap the <b>Share</b> button.</li>
+          <li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+          <li>Always open the app from that icon. Safari tabs keep separate data.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Sections">
+    <button data-tab="today" class="on" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <span>Today</span>
+    </button>
+    <button data-tab="history">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+      <span>History</span>
+    </button>
+    <button data-tab="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="share-dialog">
+    <p><b>Your file is ready</b></p>
+    <p class="muted small" id="share-dialog-name"></p>
+    <p class="small">Tap Save, then choose <b>Save to Files</b>.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" id="share-dialog-cancel">Cancel</button>
+      <button class="btn" id="share-dialog-go">Save</button>
+    </div>
+  </dialog>
+
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
