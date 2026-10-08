@@ -393,12 +393,49 @@
   // ---------- Screens ----------
   const SCREENS = {
     async welcome() {
-      return `<section class="screen center">
-          <div class="app-badge">${icon('bowl')}</div>
-          <h1 class="xl" tabindex="-1">${t('welcomeTitle')}</h1>
-          <p class="lead muted">${t('welcomeLead')}</p>
-          <button type="button" class="btn-primary" data-act="go" data-to="about">${t('welcomeStart')}</button>
-          <button type="button" class="btn-text center" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">${icon('globe')}${t('otherLangName')}</button>
+      // The picture at the top is a preview of the Today screen (decoration only).
+      const sample = FOODS.find((f) => f.ja === 'きつねうどん') || FOODS[0];
+      const R = 84;
+      const C = 2 * Math.PI * R;
+      const floats = MEALS.map((m, i) => `<span class="float-tile f${i + 1}"><span class="tile ${MEAL_STYLE[m].tile}">${icon(MEAL_STYLE[m].icon)}</span></span>`).join('');
+      return `<section class="welcome">
+          <div class="welcome-top">
+            <span class="brand"><span class="brand-badge">${icon('bowl')}</span>${t('appName')}</span>
+            <button type="button" class="lang-pill" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">${icon('globe')}${t('otherLangName')}</button>
+          </div>
+
+          <div class="hero-art" aria-hidden="true">
+            <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
+            <div class="hero-ring">
+              <svg width="184" height="184" viewBox="0 0 184 184">
+                <defs><linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1"><stop class="ring-grad-a" offset="0"/><stop class="ring-grad-b" offset="1"/></linearGradient></defs>
+                <circle class="ring-track" cx="92" cy="92" r="${R}"/>
+                <circle class="ring-fill" cx="92" cy="92" r="${R}" transform="rotate(-90 92 92)" stroke-dasharray="${(C * 0.62).toFixed(1)} ${C.toFixed(1)}"/>
+              </svg>
+              <div class="ring-center">
+                <div class="ring-num">${fmt(1240)}</div>
+                <div class="ring-label">${t('ringLeftToday')}</div>
+              </div>
+            </div>
+            ${floats}
+            <span class="float-chip"><span class="chip-check">${icon('check')}</span>${esc(t('welcomeSample', foodName(sample), fmt(sample.kcal)))}</span>
+          </div>
+
+          <div class="welcome-copy">
+            <h1 tabindex="-1">${t('welcomeTitle')}</h1>
+            <p class="lead muted">${t('welcomeLead')}</p>
+          </div>
+
+          <ul class="features">
+            <li><span class="tile t-pink">${icon('plus')}</span><span>${t('welcomeF1')}</span></li>
+            <li><span class="tile t-peach">${icon('target')}</span><span>${t('welcomeF2')}</span></li>
+            <li><span class="tile t-mint">${icon('shield')}</span><span>${t('welcomeF3')}</span></li>
+          </ul>
+
+          <div class="welcome-cta">
+            <button type="button" class="btn-primary" data-act="go" data-to="about">${t('welcomeStart')}${icon('next')}</button>
+            <p class="welcome-note">${t('welcomeSetupTime')}</p>
+          </div>
         </section>`;
     },
 
@@ -1405,8 +1442,8 @@
     I18N.setLang(I18N.defaultLang);
     try {
       await DB.open();
-      const [goal, goalType, onboarded, lang, foodCount, weightCount] = await Promise.all([
-        DB.getSetting('goal', DEFAULT_GOAL),
+      const [savedGoal, goalType, onboarded, lang, foodCount, weightCount] = await Promise.all([
+        DB.getSetting('goal', null),
         DB.getSetting('goalType', 'keep'),
         DB.getSetting('onboarded', false),
         DB.getSetting('lang', null),
@@ -1414,12 +1451,12 @@
         DB.count('weights'),
       ]);
       if (lang) I18N.setLang(lang);
-      state.goal = goal;
+      state.goal = savedGoal ?? DEFAULT_GOAL;
       state.goalType = GOAL_TYPES[goalType] ? goalType : 'keep';
       await loadProfile();
       if (!onboarded) {
-        if (foodCount + weightCount > 0) {
-          // Existing users of the earlier version skip the welcome screens.
+        if (foodCount + weightCount > 0 || savedGoal !== null) {
+          // Existing users of an earlier version (any entries, or a goal they set) skip the welcome screens.
           await DB.setSetting('onboarded', true);
         } else {
           state.screen = 'welcome';
