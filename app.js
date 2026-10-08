@@ -1,6 +1,9 @@
 'use strict';
 
 (() => {
+  const t = I18N.t;
+
+  // Stored in the database as these English keys; shown via t(`meal_${key}`).
   const MEALS = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
   const DEFAULT_GOAL = 2000;
   const GOAL_MIN = 500;
@@ -8,17 +11,37 @@
   const BACKUP_REMINDER_DAYS = 7;
   const DAY_MS = 86400000;
 
-  const GOAL_TYPES = {
-    lose: { title: 'Lose weight', sub: 'Eat a little less each day', phrase: 'lose weight', kcal: 1600 },
-    keep: { title: 'Stay the same weight', sub: 'Eat about what your body needs', phrase: 'stay the same weight', kcal: 2000 },
-    gain: { title: 'Gain weight', sub: 'Eat a little more each day', phrase: 'gain weight', kcal: 2400 },
-  };
+  // ---- Suggested daily calories ----
+  // Calories to keep the same weight = resting calories (BMR) × activity level.
+  //  - BMR: 国立健康・栄養研究所の式 (Ganpule et al. 2007), made from Japanese adults:
+  //    (0.1238 + 0.0481×kg + 0.0234×cm − 0.0138×age − 0.5473×sexIndex) × 1000 / 4.186 kcal/day,
+  //    sexIndex: men 1, women 2 ("prefer not to say" uses 1.5, halfway).
+  //  - Activity: 厚生労働省「日本人の食事摂取基準（2025年版）」身体活動レベル 低い/ふつう/高い.
+  const SEXES = ['female', 'male', 'none'];
+  const SEX_INDEX = { male: 1, female: 2, none: 1.5 };
+  const ACTIVITY = { low: 1.5, normal: 1.75, high: 2.0 };
+  // How much to eat below/above that. 300 kcal a day is roughly 1 kg a month.
+  const GOAL_TYPES = { lose: { adjust: -300 }, keep: { adjust: 0 }, gain: { adjust: 300 } };
+  const GOAL_FLOOR = 1200; // never suggest less than this, or less than the person's BMR
+  const AGE_MIN = 18; // the formula and BMI targets are for adults
+  const AGE_MAX = 110;
+  const HEIGHT_MIN = 100;
+  const HEIGHT_MAX = 250;
+  const REVIEW_KG = 3; // offer to review the goal after this much weight change
+
+  // ---- BMI (Japanese standards, not the US/WHO ones) ----
+  // Categories: 日本肥満学会 (JASSO) 肥満度分類 — obese from BMI 25 (US/WHO: 30).
+  const BMI_CATEGORIES = [[18.5, 'under'], [25, 'normal'], [30, 'obese1'], [35, 'obese2'], [40, 'obese3'], [Infinity, 'obese4']];
+  // Target range by age: 日本人の食事摂取基準（2025年版）「目標とするBMI」.
+  const targetBmi = (age) => (age < 50 ? [18.5, 24.9] : age < 65 ? [20.0, 24.9] : [21.5, 24.9]);
   const PORTIONS = [
-    { label: 'A small amount', factor: 0.7, size: 32 },
-    { label: 'A normal amount', factor: 1, size: 48 },
-    { label: 'A lot', factor: 1.4, size: 66 },
+    { key: 'small', factor: 0.7, size: 32 },
+    { key: 'normal', factor: 1, size: 48 },
+    { key: 'large', factor: 1.4, size: 66 },
   ];
-  const FOOD_GROUPS = [...new Set(FOODS.map((f) => f.group))];
+  // Portions saved by the earlier English-only version.
+  const LEGACY_PORTIONS = { 'a small amount': 'small', 'a normal amount': 'normal', 'a lot': 'large' };
+  const FOOD_GROUPS = Object.keys(FOOD_GROUP_NAMES).filter((g) => FOODS.some((f) => f.g === g));
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -31,6 +54,15 @@
     goalType: 'keep',
     goalDraft: DEFAULT_GOAL,
     goalFrom: 'onboarding', // 'onboarding' | 'more'
+    suggested: false, // goalSet shows a suggestion (true) or just the current goal (false)
+    // About the person (saved in settings once the goal is saved)
+    sex: null, // 'female' | 'male' | 'none'
+    birthYear: null, // asked as age, stored as a year so the age stays right over time
+    heightCm: null,
+    activity: null, // 'low' | 'normal' | 'high'
+    ageDraft: null, // age typed on the "about you" screen but not yet confirmed
+    bodyKg: null, // weight entered on the height/weight screen
+    latestKg: null, // most recent saved weigh-in
     meal: defaultMeal(),
     food: null, // built-in food picked for the portion step
     query: '',
@@ -52,30 +84,31 @@
     const d = fromKey(k);
     const opts = { weekday: 'long', day: 'numeric', month: 'long' };
     if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-    return d.toLocaleDateString(undefined, opts);
+    return d.toLocaleDateString(I18N.locale, opts);
   }
-  function shortDate(k) { return fromKey(k).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+  function shortDate(k) { return fromKey(k).toLocaleDateString(I18N.locale, { weekday: 'short', day: 'numeric', month: 'short' }); }
   function dayTitle(k) {
-    const t = todayKey();
-    if (k === t) return 'Today';
-    if (k === addDays(t, -1)) return 'Yesterday';
-    return fromKey(k).toLocaleDateString(undefined, { weekday: 'long' });
+    const today = todayKey();
+    if (k === today) return t('today');
+    if (k === addDays(today, -1)) return t('yesterday');
+    return fromKey(k).toLocaleDateString(I18N.locale, { weekday: 'long' });
   }
   function dayLabel(k) {
-    const t = todayKey();
-    if (k === t) return 'Today';
-    if (k === addDays(t, -1)) return 'Yesterday';
+    const today = todayKey();
+    if (k === today) return t('today');
+    if (k === addDays(today, -1)) return t('yesterday');
     return shortDate(k);
   }
   function timeOf(iso) {
     const d = new Date(iso);
-    return isNaN(d) ? '' : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return isNaN(d) ? '' : d.toLocaleTimeString(I18N.locale, { hour: 'numeric', minute: '2-digit' });
   }
+  // Calendar days, so a copy saved at 23:00 yesterday says "yesterday" this morning.
   function ago(iso) {
-    const days = Math.floor((Date.now() - new Date(iso).getTime()) / DAY_MS);
-    if (days <= 0) return 'today';
-    if (days === 1) return 'yesterday';
-    return `${days} days ago`;
+    const days = Math.round((fromKey(todayKey()) - fromKey(toKey(new Date(iso)))) / DAY_MS);
+    if (days <= 0) return t('agoToday');
+    if (days === 1) return t('agoYesterday');
+    return t('agoDays', days);
   }
   function defaultMeal() {
     const h = new Date().getHours();
@@ -86,20 +119,83 @@
   }
 
   // ---------- Helpers ----------
-  const fmt = (n) => Math.round(n).toLocaleString();
+  const fmt = (n) => Math.round(n).toLocaleString(I18N.locale);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-  const portionKcal = (food, p) => Math.max(1, Math.round((food.kcal * p.factor) / 10) * 10);
+  const mealName = (m) => t(`meal_${m}`);
+  const foodName = (f) => f[I18N.lang] || f.ja;
+  const groupName = (g) => FOOD_GROUP_NAMES[g][I18N.lang] || FOOD_GROUP_NAMES[g].ja;
+  const round50 = (n) => Math.round(n / 50) * 50;
 
-  // Accepts "72.4" or "72,4" (some iPhone regions show a comma on the decimal keypad).
+  const ageNow = () => (state.birthYear ? new Date().getFullYear() - state.birthYear : null);
+  const bmiOf = (kg, cm) => kg / ((cm / 100) ** 2);
+  const bmiCategory = (bmi) => BMI_CATEGORIES.find(([limit]) => bmi < limit)[1];
+  const profileReady = () => SEXES.includes(state.sex) && ageNow() >= AGE_MIN && state.heightCm > 0
+    && state.bodyKg > 0 && ACTIVITY[state.activity] !== undefined;
+
+  // Everything the goal screens need: BMR, daily need, BMI, warnings and the suggested goal.
+  function plan(type) {
+    if (!profileReady()) return null;
+    const age = ageNow();
+    const kg = state.bodyKg;
+    const bmr = (0.1238 + 0.0481 * kg + 0.0234 * state.heightCm - 0.0138 * age - 0.5473 * SEX_INDEX[state.sex]) * 1000 / 4.186;
+    const need = bmr * ACTIVITY[state.activity];
+    const bmi = bmiOf(kg, state.heightCm);
+    const [lo, hi] = targetBmi(age);
+    let adjust = GOAL_TYPES[type].adjust;
+    let warning = null;
+    if (type === 'lose' && bmi < lo) { adjust = 0; warning = 'loseLowBmi'; } // already below the healthy range
+    else if (type === 'gain' && bmi >= 25) { adjust = 0; warning = 'gainHighBmi'; } // already obese (Japanese standard)
+    else if (type === 'lose' && age >= 65) warning = 'loseSenior'; // weight loss raises frailty risk
+    const floor = Math.max(GOAL_FLOOR, Math.ceil(bmr / 50) * 50);
+    const goal = Math.min(GOAL_MAX, Math.max(floor, round50(need + adjust)));
+    return { age, bmr, need, bmi, lo, hi, category: bmiCategory(bmi), adjust, warning, goal };
+  }
+
+  // Loads the saved answers and latest weight into state (used on start and before goal screens).
+  async function loadProfile() {
+    const [sex, birthYear, heightCm, activity, latest] = await Promise.all([
+      DB.getSetting('sex', null),
+      DB.getSetting('birthYear', null),
+      DB.getSetting('heightCm', null),
+      DB.getSetting('activity', null),
+      DB.getWeightBefore(addDays(todayKey(), 1)), // latest weigh-in up to today
+    ]);
+    state.sex = SEXES.includes(sex) ? sex : null;
+    state.birthYear = Number.isInteger(birthYear) ? birthYear : null;
+    state.heightCm = Number.isFinite(heightCm) ? heightCm : null;
+    state.activity = ACTIVITY[activity] !== undefined ? activity : null;
+    state.latestKg = latest ? latest.kg : null;
+    state.bodyKg = state.latestKg;
+  }
+
+  const portionKcal = (food, p) => (food.kcal === 0 ? 0 : Math.max(1, Math.round((food.kcal * p.factor) / 10) * 10));
+  function portionText(portion) {
+    if (!portion) return '';
+    const key = LEGACY_PORTIONS[portion] || portion;
+    return PORTIONS.some((p) => p.key === key) ? t(`portion_${key}`) : portion;
+  }
+
+  // For search: full-width → half-width, katakana → hiragana, no spaces or brackets,
+  // so "ラーメン", "らーめん" and "ﾗｰﾒﾝ" all match.
+  function norm(s) {
+    return String(s).normalize('NFKC').toLowerCase()
+      .replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
+      .replace(/[\s()・、。,.]/g, '');
+  }
+  FOODS.forEach((f) => { f.search = norm(`${f.ja}${f.kana}${f.en}`); });
+
+  // Accepts "72.4", "72,4", full-width "７２．４" (Japanese keyboard) and "1,200" (thousands).
   function parseNum(raw) {
-    const s = String(raw).trim().replace(',', '.');
+    let s = String(raw).normalize('NFKC').trim();
+    if (/^\d{1,3}(,\d{3})+$/.test(s)) s = s.replace(/,/g, ''); // "1,200" → 1200
+    else s = s.replace(',', '.'); // "72,4" → 72.4
     return /^\d+(\.\d+)?$/.test(s) ? Number(s) : NaN;
   }
 
   function showError(err) {
     console.error(err);
-    $('#error-text').textContent = `Something went wrong: ${(err && err.message) || err}`;
+    $('#error-text').textContent = t('error', (err && err.message) || err);
     $('#error-box').hidden = false;
   }
 
@@ -123,11 +219,12 @@
     shield: '<path d="M12 3l7.5 3v6c0 4.5-3.2 7.6-7.5 9-4.3-1.4-7.5-4.5-7.5-9V6z"/>',
     phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/>',
     share: '<path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-1"/>',
+    globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
   const topbar = (back, step = '') => `<div class="topbar">
-      <button type="button" class="btn-back" data-act="go" data-to="${back}">${icon('back')}Back</button>
+      <button type="button" class="btn-back" data-act="go" data-to="${back}">${icon('back')}${t('back')}</button>
       ${step ? `<span class="muted step">${step}</span>` : ''}
     </div>`;
 
@@ -136,7 +233,7 @@
     if (!n) return '';
     return `<div class="notice${n.kind === 'error' ? ' error' : ''}" role="status">
         ${n.kind === 'error' ? '' : icon('check')}<span class="notice-text">${esc(n.text)}</span>
-        ${n.undo ? '<button type="button" class="btn-small" data-act="undo">Undo</button>' : ''}
+        ${n.undo ? `<button type="button" class="btn-small" data-act="undo">${t('undo')}</button>` : ''}
       </div>`;
   }
 
@@ -145,17 +242,17 @@
     const data = `data-target="${id}" data-min="${min}" data-max="${max}" data-dec="${decimals}"`;
     return `<div class="card">
         <div class="stepper">
-          <button type="button" class="btn-round" data-act="step" data-delta="-${step}" ${data} aria-label="Less">${icon('minus')}</button>
+          <button type="button" class="btn-round" data-act="step" data-delta="-${step}" ${data} aria-label="${t('less')}">${icon('minus')}</button>
           <div class="stepper-value">
             <input id="${id}" class="big-number" type="text" inputmode="${decimals ? 'decimal' : 'numeric'}"
               value="${value}" aria-label="${label}" autocomplete="off" enterkeyhint="done">
             <div class="muted">${unit}</div>
           </div>
-          <button type="button" class="btn-round" data-act="step" data-delta="${step}" ${data} aria-label="More">${icon('plus')}</button>
+          <button type="button" class="btn-round" data-act="step" data-delta="${step}" ${data} aria-label="${t('more')}">${icon('plus')}</button>
         </div>
         ${bigStep ? `<div class="stepper-big">
-          <button type="button" class="btn-small" data-act="step" data-delta="-${bigStep}" ${data}>${bigStep} ${bigUnit} less</button>
-          <button type="button" class="btn-small" data-act="step" data-delta="${bigStep}" ${data}>${bigStep} ${bigUnit} more</button>
+          <button type="button" class="btn-small" data-act="step" data-delta="-${bigStep}" ${data}>${t('bigLess', bigStep, bigUnit)}</button>
+          <button type="button" class="btn-small" data-act="step" data-delta="${bigStep}" ${data}>${t('bigMore', bigStep, bigUnit)}</button>
         </div>` : ''}
       </div>
       <p class="field-error" id="${id}-error" hidden></p>`;
@@ -172,21 +269,81 @@
     async welcome() {
       return `<section class="screen center">
           <div class="app-badge">${icon('bowl')}</div>
-          <h1 class="xl" tabindex="-1">Welcome to your food diary</h1>
-          <p class="lead muted">Write down what you eat each day and see how you are doing. It only takes a few taps.</p>
-          <button type="button" class="btn-primary" data-act="go" data-to="goalType">Let's start</button>
+          <h1 class="xl" tabindex="-1">${t('welcomeTitle')}</h1>
+          <p class="lead muted">${t('welcomeLead')}</p>
+          <button type="button" class="btn-primary" data-act="go" data-to="about">${t('welcomeStart')}</button>
+          <button type="button" class="btn-text" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">${icon('globe')}${t('otherLangName')}</button>
+        </section>`;
+    },
+
+    async about() {
+      const onboarding = state.goalFrom === 'onboarding';
+      const age = state.ageDraft ?? ageNow() ?? 40;
+      return `${topbar(onboarding ? 'welcome' : 'goalSet', onboarding ? t('step', 1, 5) : '')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('aboutTitle')}</h1>
+          <p class="muted">${t('aboutSub')}</p>
+          <h2>${t('sexLabel')}</h2>
+          <div class="stack">${SEXES.map((s) => `<button type="button" class="choice${state.sex === s ? ' on' : ''}" data-act="pick-sex" data-sex="${s}" aria-pressed="${state.sex === s}">
+              <span class="choice-text"><b>${t(`sex_${s}`)}</b></span>${state.sex === s ? icon('check', 'accent') : ''}
+            </button>`).join('')}</div>
+          <p class="field-error" id="sex-error" hidden></p>
+          <h2>${t('ageLabel')}</h2>
+          ${stepper({ id: 'age-input', value: age, unit: t('ageUnit'), step: 1, min: AGE_MIN, max: AGE_MAX, decimals: 0, label: t('ageLabel'), bigStep: 10, bigUnit: t('ageUnit') })}
+          <p class="muted small">${t('ageNote')}</p>
+          <button type="button" class="btn-primary" data-act="about-next">${t('next')}</button>
+        </section>`;
+    },
+
+    async body() {
+      const onboarding = state.goalFrom === 'onboarding';
+      const defaults = { female: [155, 52], male: [170, 65], none: [162, 58] }[state.sex] || [162, 58];
+      const cm = state.heightCm ?? defaults[0];
+      const kg = state.bodyKg ?? defaults[1];
+      return `${topbar('about', onboarding ? t('step', 2, 5) : '')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('bodyTitle')}</h1>
+          <p class="muted">${t('bodySub')}</p>
+          <h2>${t('heightLabel')}</h2>
+          ${stepper({ id: 'height-input', value: Math.round(cm), unit: 'cm', step: 1, min: HEIGHT_MIN, max: HEIGHT_MAX, decimals: 0, label: t('heightLabel'), bigStep: 10, bigUnit: 'cm' })}
+          <h2>${t('bodyWeightLabel')}</h2>
+          ${stepper({ id: 'body-weight-input', value: kg.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria'), bigStep: 1, bigUnit: 'kg' })}
+          <p class="muted small">${t('bodyWeightNote')}</p>
+          <button type="button" class="btn-primary" data-act="body-next">${t('next')}</button>
+        </section>`;
+    },
+
+    async activity() {
+      const onboarding = state.goalFrom === 'onboarding';
+      return `${topbar('body', onboarding ? t('step', 3, 5) : '')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('activityTitle')}</h1>
+          <p class="muted">${t('activitySub')}</p>
+          <div class="stack">
+            ${Object.keys(ACTIVITY).map((key) => `<button type="button" class="choice${state.activity === key ? ' on' : ''}" data-act="pick-activity" data-activity="${key}">
+                <span class="choice-text"><b>${t(`activity_${key}_title`)}</b><span class="choice-sub">${t(`activity_${key}_sub`)}</span></span>${icon('next')}
+              </button>`).join('')}
+          </div>
         </section>`;
     },
 
     async goalType() {
       const onboarding = state.goalFrom === 'onboarding';
-      return `${topbar(onboarding ? 'welcome' : 'goalSet', onboarding ? 'Step 1 of 2' : '')}
+      const p = plan('keep');
+      const bmiBox = p ? `<div class="card">
+            <div class="eyebrow">${t('bmiTitle')}</div>
+            <p class="big-sentence">${t('bmiLine', p.bmi.toFixed(1), t(`bmi_${p.category}`))}</p>
+            <p class="muted small">${t('bmiTarget', p.age, p.lo.toFixed(1), p.hi.toFixed(1))}</p>
+            <p class="muted small">${t('bmiStandard')}</p>
+          </div>` : '';
+      return `${topbar('activity', onboarding ? t('step', 4, 5) : '')}
         <section class="screen">
-          <h1 tabindex="-1">What would you like to do?</h1>
-          <p class="muted">Pick one. You can change it later.</p>
+          <h1 tabindex="-1">${t('goalTypeTitle')}</h1>
+          ${bmiBox}
+          <p class="muted">${t('goalTypeSub')}</p>
           <div class="stack">
-            ${Object.entries(GOAL_TYPES).map(([key, g]) => `<button type="button" class="choice${state.goalType === key ? ' on' : ''}" data-act="pick-goal-type" data-type="${key}">
-                <span class="choice-text"><b>${g.title}</b><span class="choice-sub">${g.sub}</span></span>${icon('next')}
+            ${Object.keys(GOAL_TYPES).map((key) => `<button type="button" class="choice${state.goalType === key ? ' on' : ''}" data-act="pick-goal-type" data-type="${key}">
+                <span class="choice-text"><b>${t(`goal_${key}_title`)}</b><span class="choice-sub">${t(`goal_${key}_sub`)}</span></span>${icon('next')}
               </button>`).join('')}
           </div>
         </section>`;
@@ -194,31 +351,51 @@
 
     async goalSet() {
       const onboarding = state.goalFrom === 'onboarding';
-      const g = GOAL_TYPES[state.goalType] || GOAL_TYPES.keep;
-      return `${topbar(onboarding ? 'goalType' : 'more', onboarding ? 'Step 2 of 2' : '')}
+      const type = GOAL_TYPES[state.goalType] ? state.goalType : 'keep';
+      const p = state.suggested ? plan(type) : null;
+      let warning = '';
+      let basis = '';
+      if (p) {
+        if (p.warning) {
+          warning = `<div class="warnbox"><div class="box-title">${t(`warn_${p.warning}_title`)}</div><div>${t(`warn_${p.warning}_text`, p.lo.toFixed(1))}</div></div>`;
+        }
+        let how = t('goalBasis', fmt(p.bmr), t(`activity_${state.activity}_title`), ACTIVITY[state.activity].toFixed(2), fmt(p.need));
+        if (p.adjust < 0) how += `${t('goalAdjustLose', Math.abs(p.adjust))}`;
+        if (p.adjust > 0) how += `${t('goalAdjustGain', p.adjust)}`;
+        basis = `<p class="muted small">${how}</p><p class="muted small">${t('goalSource')}</p>`;
+      }
+      // When a warning replaced the lose/gain plan, the lead says "keep" so it matches the number.
+      const leadType = p && p.adjust === 0 ? 'keep' : type;
+      return `${topbar(state.suggested ? 'goalType' : 'more', onboarding ? t('step', 5, 5) : '')}
         <section class="screen">
-          <h1 tabindex="-1">${onboarding ? 'Your daily goal' : 'Change my daily goal'}</h1>
-          <p class="lead">${onboarding
-            ? `To ${g.phrase}, we suggest eating about this many calories each day:`
-            : 'How many calories would you like to eat each day?'}</p>
-          ${stepper({ id: 'goal-input', value: state.goalDraft, unit: 'calories a day', step: 50, min: GOAL_MIN, max: GOAL_MAX, decimals: 0, label: 'Daily calorie goal' })}
-          <p class="muted">Calories are the energy in food. Not sure? Just keep this number. You can change it any time under More.</p>
-          ${onboarding ? '' : '<button type="button" class="btn-text" data-act="goal-help">Help me choose a number</button>'}
-          <button type="button" class="btn-primary" data-act="save-goal">${onboarding ? "Looks good, let's go" : 'Save my goal'}</button>
+          <h1 tabindex="-1">${onboarding ? t('goalTitleOnboarding') : t('goalTitleChange')}</h1>
+          ${warning}
+          <p class="lead">${state.suggested ? t(`goal_${leadType}_suggest`) : t('goalLeadChange')}</p>
+          ${stepper({ id: 'goal-input', value: state.goalDraft, unit: t('goalUnit'), step: 50, min: GOAL_MIN, max: GOAL_MAX, decimals: 0, label: t('goalAria') })}
+          ${basis}
+          <p class="muted">${t('goalHint')}</p>
+          ${onboarding ? '' : `<button type="button" class="btn-text" data-act="goal-help">${t('goalHelp')}</button>`}
+          <button type="button" class="btn-primary" data-act="save-goal">${onboarding ? t('goalSaveOnboarding') : t('goalSaveChange')}</button>
         </section>`;
     },
 
     async today() {
       const date = state.date;
       const isToday = date === todayKey();
-      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount] = await Promise.all([
+      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount, goalWeight] = await Promise.all([
         DB.getFoodsByDate(date),
         DB.getWeight(date),
         DB.getWeightBefore(date),
         DB.getSetting('lastBackup', null),
         DB.count('foods'),
         DB.count('weights'),
+        DB.getSetting('goalWeight', null),
       ]);
+
+      // Offer to review the goal once weight has moved a few kg from when it was set.
+      const nowKg = (weight || lastWeight || {}).kg;
+      const kgChange = isToday && goalWeight && nowKg ? Math.round((nowKg - goalWeight) * 10) / 10 : 0;
+      const needsReview = Math.abs(kgChange) >= REVIEW_KG;
 
       const total = foods.reduce((s, f) => s + f.kcal, 0);
       const left = state.goal - total;
@@ -229,33 +406,43 @@
       const needsBackup = foodCount + weightCount > 0 && backupAge > BACKUP_REMINDER_DAYS;
 
       let weightSub;
-      if (weight) weightSub = `${isToday ? 'Today' : 'This day'}: ${weight.kg.toFixed(1)} kg`;
-      else if (lastWeight) weightSub = `Last time: ${lastWeight.kg.toFixed(1)} kg, on ${shortDate(lastWeight.date)}`;
-      else weightSub = 'You have not weighed yourself yet';
+      if (weight) weightSub = t(isToday ? 'weightSubToday' : 'weightSubPast', weight.kg.toFixed(1));
+      else if (lastWeight) weightSub = t('weightSubLast', lastWeight.kg.toFixed(1), shortDate(lastWeight.date));
+      else weightSub = t('weightSubNone');
+
+      let summaryLabel;
+      let summaryUnit;
+      if (over) {
+        summaryLabel = t('summaryOver');
+        summaryUnit = t(isToday ? 'summaryUnitOverToday' : 'summaryUnitOverPast');
+      } else {
+        summaryLabel = t(isToday ? 'summaryLeftToday' : 'summaryLeftPast');
+        summaryUnit = t(isToday ? 'summaryUnitLeftToday' : 'summaryUnitLeftPast');
+      }
 
       const meals = MEALS.map((meal) => {
         const items = foods.filter((f) => f.meal === meal);
         const sub = items.reduce((s, f) => s + f.kcal, 0);
         return `<div class="card meal-card">
-            <div class="meal-head"><span class="meal-name">${meal}</span><span class="muted small">${items.length ? `${fmt(sub)} calories` : ''}</span></div>
-            ${items.length === 0 ? '<div class="muted">Nothing yet</div>' : items.map((f) => `<div class="item">
+            <div class="meal-head"><span class="meal-name">${mealName(meal)}</span><span class="muted small">${items.length ? t('kcal', fmt(sub)) : ''}</span></div>
+            ${items.length === 0 ? `<div class="muted">${t('nothingYet')}</div>` : items.map((f) => `<div class="item">
                 <div class="item-main">
                   <div class="item-name">${esc(f.name)}</div>
-                  <div class="muted small">${fmt(f.kcal)} calories · ${esc(f.portion || timeOf(f.createdAt))}</div>
+                  <div class="muted small">${t('kcal', fmt(f.kcal))} · ${esc(portionText(f.portion) || timeOf(f.createdAt))}</div>
                 </div>
-                <button type="button" class="btn-small" data-act="remove" data-id="${f.id}" aria-label="Remove ${esc(f.name)}">Remove</button>
+                <button type="button" class="btn-small" data-act="remove" data-id="${f.id}" aria-label="${esc(t('removeAria', f.name))}">${t('remove')}</button>
               </div>`).join('')}
           </div>`;
       }).join('');
 
       return `<section class="screen">
           ${isToday ? '' : `<div class="warnbox">
-            <div class="box-title">You are looking at a past day</div>
+            <div class="box-title">${t('pastDayTitle')}</div>
             <div class="day-arrows">
-              <button type="button" class="btn-small" data-act="day" data-delta="-1">${icon('back')}Day before</button>
-              <button type="button" class="btn-small" data-act="day" data-delta="1">Day after${icon('next')}</button>
+              <button type="button" class="btn-small" data-act="day" data-delta="-1">${icon('back')}${t('dayBefore')}</button>
+              <button type="button" class="btn-small" data-act="day" data-delta="1">${t('dayAfter')}${icon('next')}</button>
             </div>
-            <button type="button" class="btn-primary" data-act="tab" data-to="today">Go back to today</button>
+            <button type="button" class="btn-primary" data-act="tab" data-to="today">${t('backToToday')}</button>
           </div>`}
 
           <div class="day-head">
@@ -263,42 +450,46 @@
               <h1 class="xl" tabindex="-1">${dayTitle(date)}</h1>
               <div class="muted">${longDate(date)}</div>
             </div>
-            ${isToday ? '<button type="button" class="btn-text" data-act="day" data-delta="-1">See yesterday</button>' : ''}
+            ${isToday ? `<button type="button" class="btn-text" data-act="day" data-delta="-1">${t('seeYesterday')}</button>` : ''}
           </div>
 
           ${noticeHtml()}
 
           <div class="card summary">
-            <div class="summary-label">${over ? 'You have gone over by' : isToday ? 'You can still eat' : 'You had left'}</div>
+            <div class="summary-label">${summaryLabel}</div>
             <div class="summary-number${over ? ' over' : ''}">${fmt(Math.abs(left))}</div>
-            <div>${over
-              ? (isToday ? 'calories. That is okay, tomorrow is a new day.' : 'calories that day.')
-              : (isToday ? 'more calories today' : 'calories that day')}</div>
+            <div>${summaryUnit}</div>
             <div class="bar"><div class="bar-fill${over ? ' over' : ''}" style="width:${pct}%"></div></div>
-            <div class="muted small">${isToday ? 'You have eaten' : 'You ate'} ${fmt(total)} of your ${fmt(state.goal)} calories.</div>
+            <div class="muted small">${t(isToday ? 'eatenToday' : 'eatenPast', fmt(total), fmt(state.goal))}</div>
           </div>
 
           <div class="stack">
-            <button type="button" class="btn-primary btn-xl" data-act="start-add">${icon('plus')}${isToday ? 'Add what I ate' : 'Add food to this day'}</button>
+            <button type="button" class="btn-primary btn-xl" data-act="start-add">${icon('plus')}${t(isToday ? 'addToday' : 'addPast')}</button>
             <button type="button" class="btn-secondary" data-act="go" data-to="weigh">
               ${icon('scale')}
-              <span class="choice-text"><span class="d-block">${isToday ? 'Weigh myself' : 'Weight on this day'}</span><span class="choice-sub">${weightSub}</span></span>
+              <span class="choice-text"><span class="d-block">${t(isToday ? 'weighToday' : 'weighPast')}</span><span class="choice-sub">${weightSub}</span></span>
             </button>
           </div>
 
           ${isStandalone() ? '' : `<div class="warnbox">
-            <div class="box-title">Put this diary on your home screen</div>
-            <div>It keeps your diary safe, and you can open it like any other app.</div>
-            <button type="button" class="btn-small" data-act="go" data-to="help">Show me how</button>
+            <div class="box-title">${t('installTitle')}</div>
+            <div>${t('installText')}</div>
+            <button type="button" class="btn-small" data-act="go" data-to="help">${t('showHow')}</button>
           </div>`}
 
-          ${needsBackup ? `<div class="warnbox">
-            <div class="box-title">Keep your diary safe</div>
-            <div>${lastBackup ? `You last saved a copy of your diary ${ago(lastBackup)}.` : 'You have not saved a copy of your diary yet.'}</div>
-            <button type="button" class="btn-small" data-act="go" data-to="backup">Show me how</button>
+          ${needsReview ? `<div class="warnbox">
+            <div class="box-title">${t('reviewTitle')}</div>
+            <div>${t('reviewText', `${kgChange > 0 ? '+' : '−'}${Math.abs(kgChange).toFixed(1)}`)}</div>
+            <button type="button" class="btn-small" data-act="review-goal">${t('reviewButton')}</button>
           </div>` : ''}
 
-          <h2>${isToday ? 'What I ate today' : 'What I ate that day'}</h2>
+          ${needsBackup ? `<div class="warnbox">
+            <div class="box-title">${t('backupTitle')}</div>
+            <div>${lastBackup ? t('backupLast', ago(lastBackup)) : t('backupNone')}</div>
+            <button type="button" class="btn-small" data-act="go" data-to="backup">${t('showHow')}</button>
+          </div>` : ''}
+
+          <h2>${t(isToday ? 'ateToday' : 'atePast')}</h2>
           ${meals}
         </section>`;
     },
@@ -306,19 +497,19 @@
     async food() {
       state.mine = summarizeFoods(await DB.getAllFoods());
       const isToday = state.date === todayKey();
-      return `${topbar('today', 'Step 1 of 2')}
+      return `${topbar('today', t('step', 1, 2))}
         <section class="screen">
-          <h1 tabindex="-1">What did you eat?</h1>
+          <h1 tabindex="-1">${t('foodTitle')}</h1>
           <div class="card row-card">
-            <span>Adding to: <b>${state.meal}</b>${isToday ? '' : `, ${shortDate(state.date)}`}</span>
-            <button type="button" class="btn-text" data-act="go" data-to="meal">Change</button>
+            <span>${t('addingTo')} <b>${mealName(state.meal)}</b>${isToday ? '' : t('addingToDate', shortDate(state.date))}</span>
+            <button type="button" class="btn-text" data-act="go" data-to="meal">${t('change')}</button>
           </div>
           <div class="field">
-            <label class="label" for="food-search">Search for a food</label>
-            <input id="food-search" class="input" type="search" placeholder="For example: rice" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
+            <label class="label" for="food-search">${t('searchLabel')}</label>
+            <input id="food-search" class="input" type="search" placeholder="${t('searchPlaceholder')}" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
           </div>
           <div id="food-results">${foodResults()}</div>
-          <button type="button" class="btn-secondary center" data-act="start-custom">I can't find it. Let me type it in.</button>
+          <button type="button" class="btn-secondary center" data-act="start-custom">${t('cantFind')}</button>
         </section>`;
     },
 
@@ -326,10 +517,10 @@
       const suggested = defaultMeal();
       return `${topbar('food')}
         <section class="screen">
-          <h1 tabindex="-1">Which meal is this?</h1>
+          <h1 tabindex="-1">${t('mealTitle')}</h1>
           <div class="stack">
             ${MEALS.map((m) => `<button type="button" class="choice${m === state.meal ? ' on' : ''}" data-act="pick-meal" data-meal="${m}">
-                <span class="choice-text"><b>${m}</b>${m === suggested ? '<span class="choice-sub">Suggested for this time of day</span>' : ''}</span>
+                <span class="choice-text"><b>${mealName(m)}</b>${m === suggested ? `<span class="choice-sub">${t('mealSuggested')}</span>` : ''}</span>
                 ${m === state.meal ? icon('check', 'accent') : ''}
               </button>`).join('')}
           </div>
@@ -339,34 +530,34 @@
     async portion() {
       const f = state.food;
       if (!f) return SCREENS.food();
-      return `${topbar('food', 'Step 2 of 2')}
+      return `${topbar('food', t('step', 2, 2))}
         <section class="screen">
-          <h1 tabindex="-1">How much did you have?</h1>
-          <p class="food-name">${esc(f.name)}</p>
+          <h1 tabindex="-1">${t('portionTitle')}</h1>
+          <p class="food-name">${esc(foodName(f))}</p>
           <div class="stack">
             ${PORTIONS.map((p, i) => `<button type="button" class="choice portion" data-act="pick-portion" data-idx="${i}">
                 <span class="portion-pic"><span class="portion-dot" style="width:${p.size}px;height:${p.size}px"></span></span>
-                <span class="choice-text"><b>${p.label}</b><span class="choice-sub">About ${fmt(portionKcal(f, p))} calories</span></span>
+                <span class="choice-text"><b>${t(`portion_${p.key}`)}</b><span class="choice-sub">${t('about', fmt(portionKcal(f, p)))}</span></span>
               </button>`).join('')}
           </div>
-          <p class="muted">Not sure? Choose "A normal amount". A rough guess is good enough.</p>
+          <p class="muted">${t('portionHint')}</p>
         </section>`;
     },
 
     async custom() {
       return `${topbar('food')}
         <section class="screen">
-          <h1 tabindex="-1">Type it in yourself</h1>
+          <h1 tabindex="-1">${t('customTitle')}</h1>
           <div class="field">
-            <label class="label" for="custom-name">What did you eat?</label>
-            <input id="custom-name" class="input" type="text" maxlength="60" placeholder="For example: soup" value="${esc(state.customName)}" autocomplete="off" enterkeyhint="next">
+            <label class="label" for="custom-name">${t('customName')}</label>
+            <input id="custom-name" class="input" type="text" maxlength="60" placeholder="${t('customPlaceholder')}" value="${esc(state.customName)}" autocomplete="off" enterkeyhint="next">
           </div>
           <div class="field">
-            <div class="label">About how many calories?</div>
-            ${stepper({ id: 'custom-kcal', value: 300, unit: 'calories', step: 50, min: 1, max: 10000, decimals: 0, label: 'Calories' })}
+            <div class="label">${t('customKcal')}</div>
+            ${stepper({ id: 'custom-kcal', value: 300, unit: t('customUnit'), step: 50, min: 1, max: 10000, decimals: 0, label: t('customAria') })}
           </div>
-          <p class="muted">Not sure? A normal meal is about 500 calories. A snack is about 150.</p>
-          <button type="button" class="btn-primary" data-act="add-custom">Add it</button>
+          <p class="muted">${t('customHint')}</p>
+          <button type="button" class="btn-primary" data-act="add-custom">${t('customAdd')}</button>
         </section>`;
     },
 
@@ -374,84 +565,93 @@
       const date = state.date;
       const isToday = date === todayKey();
       const [w, prev] = await Promise.all([DB.getWeight(date), DB.getWeightBefore(date)]);
-      const start = w ? w.kg : prev ? prev.kg : 70;
+      const start = w ? w.kg : prev ? prev.kg : 60;
       let note;
-      if (w) note = `Already saved for this day: ${w.kg.toFixed(1)} kg. Saving again will replace it.`;
-      else if (prev) note = `Last time you weighed ${prev.kg.toFixed(1)} kg, on ${shortDate(prev.date)}.`;
-      else note = 'This is your first weigh-in. Well done for starting!';
+      if (w) note = t('weighNoteSaved', w.kg.toFixed(1));
+      else if (prev) note = t('weighNoteLast', prev.kg.toFixed(1), shortDate(prev.date));
+      else note = t('weighNoteFirst');
       return `${topbar('today')}
         <section class="screen">
-          <h1 tabindex="-1">${isToday ? 'How much do you weigh today?' : `How much did you weigh on ${shortDate(date)}?`}</h1>
-          <p class="muted">Step on your scale. Then press the buttons until the number matches. You can also tap the number to type it.</p>
-          ${stepper({ id: 'weight-input', value: start.toFixed(1), unit: 'kilograms', step: 0.1, min: 20, max: 400, decimals: 1, label: 'Weight in kilograms', bigStep: 1, bigUnit: 'kg' })}
+          <h1 tabindex="-1">${isToday ? t('weighTitleToday') : t('weighTitlePast', shortDate(date))}</h1>
+          <p class="muted">${t('weighHelp')}</p>
+          ${stepper({ id: 'weight-input', value: start.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria'), bigStep: 1, bigUnit: 'kg' })}
           <p class="muted">${note}</p>
-          <button type="button" class="btn-primary" data-act="save-weight">Save my weight</button>
-          ${w ? '<button type="button" class="btn-text danger" data-act="remove-weight">Remove this weight</button>' : ''}
+          <button type="button" class="btn-primary" data-act="save-weight">${t('weighSave')}</button>
+          ${w ? `<button type="button" class="btn-text danger" data-act="remove-weight">${t('weighRemove')}</button>` : ''}
         </section>`;
     },
 
     async progress() {
       const [foods, weights] = await Promise.all([DB.getAllFoods(), DB.getAllWeights()]);
-      const t = todayKey();
+      const today = todayKey();
 
       // Weight (weights come back sorted by date, their key)
-      const monthAgo = addDays(t, -30);
-      const recentW = weights.filter((w) => w.date >= monthAgo && w.date <= t);
+      const monthAgo = addDays(today, -30);
+      const recentW = weights.filter((w) => w.date >= monthAgo && w.date <= today);
       let wSentence;
       let wDetail;
       if (!weights.length) {
-        wSentence = 'You have not weighed yourself yet.';
-        wDetail = 'Tap "Weigh myself" on the Today screen to start.';
+        wSentence = t('wNone');
+        wDetail = t('wNoneDetail');
       } else if (recentW.length < 2) {
         const last = weights[weights.length - 1];
-        wSentence = `Your last weight was ${last.kg.toFixed(1)} kg.`;
-        wDetail = `That was on ${shortDate(last.date)}. Weigh yourself again to see how you are doing.`;
+        wSentence = t('wLast', last.kg.toFixed(1));
+        wDetail = t('wLastDetail', shortDate(last.date));
       } else {
         const first = recentW[0];
         const last = recentW[recentW.length - 1];
         const diff = Math.round((last.kg - first.kg) * 10) / 10;
         const since = shortDate(first.date);
-        if (diff < 0) wSentence = `You have lost ${Math.abs(diff).toFixed(1)} kg since ${since}.`;
-        else if (diff > 0) wSentence = `You have gained ${diff.toFixed(1)} kg since ${since}.`;
-        else wSentence = `Your weight has stayed the same since ${since}.`;
-        wDetail = `From ${first.kg.toFixed(1)} kg to ${last.kg.toFixed(1)} kg.`;
+        if (diff < 0) wSentence = t('wLost', Math.abs(diff).toFixed(1), since);
+        else if (diff > 0) wSentence = t('wGained', diff.toFixed(1), since);
+        else wSentence = t('wSame', since);
+        wDetail = t('wFromTo', first.kg.toFixed(1), last.kg.toFixed(1));
       }
       const lastWeighIns = weights.slice(-5).reverse();
+      let bmiLine = '';
+      if (weights.length && state.heightCm) {
+        const bmi = bmiOf(weights[weights.length - 1].kg, state.heightCm);
+        const age = ageNow();
+        const [lo, hi] = targetBmi(age ?? 18);
+        bmiLine = `<p class="muted">${t('bmiLine', bmi.toFixed(1), t(`bmi_${bmiCategory(bmi)}`))}${age ? ` · ${t('bmiTargetShort', lo.toFixed(1), hi.toFixed(1))}` : ''}</p>`;
+      }
 
       // Calories per day
       const kcalByDay = new Map();
       for (const f of foods) kcalByDay.set(f.date, (kcalByDay.get(f.date) || 0) + f.kcal);
       const days = [];
       for (let i = 0; i < state.daysShown; i++) {
-        const d = addDays(t, -i);
+        const d = addDays(today, -i);
         days.push({ date: d, kcal: kcalByDay.get(d) });
       }
       const week = days.slice(0, 7).filter((d) => d.kcal !== undefined);
       const within = week.filter((d) => d.kcal <= state.goal).length;
       const maxV = Math.max(2600, state.goal * 1.25, ...days.map((d) => d.kcal || 0));
       const goalPct = (state.goal / maxV) * 100;
-      const weekSentence = week.length
-        ? `You kept to your goal on ${within} of the ${week.length} ${week.length === 1 ? 'day' : 'days'} you wrote down this week.`
-        : 'Write down what you eat, and your days will show up here.';
+      let weekSentence;
+      if (!week.length) weekSentence = t('weekNone');
+      else if (week.length === 1) weekSentence = t(within ? 'weekOneWithin' : 'weekOneOver');
+      else weekSentence = t('weekSome', within, week.length);
 
       return `<section class="screen">
-          <h1 class="xl" tabindex="-1">My progress</h1>
+          <h1 class="xl" tabindex="-1">${t('progressTitle')}</h1>
           ${noticeHtml()}
           <div class="card">
-            <div class="eyebrow">Your weight</div>
+            <div class="eyebrow">${t('yourWeight')}</div>
             <p class="big-sentence">${wSentence}</p>
             <p class="muted">${wDetail}</p>
+            ${bmiLine}
             ${lastWeighIns.length ? `<ul class="kv">${lastWeighIns.map((w) => `<li><span>${dayLabel(w.date)}</span><span>${w.kg.toFixed(1)} kg</span></li>`).join('')}</ul>` : ''}
           </div>
           <div class="card">
-            <div class="eyebrow">Your days</div>
+            <div class="eyebrow">${t('yourDays')}</div>
             <p class="big-sentence">${weekSentence}</p>
-            <p class="muted small">Tap a day to see what you ate.</p>
+            <p class="muted small">${t('tapDay')}</p>
             ${days.map((d) => {
               const has = d.kcal !== undefined;
               const pct = has ? Math.max(2, (d.kcal / maxV) * 100) : 0;
               return `<button type="button" class="day-bar" data-act="open-day" data-date="${d.date}"
-                  aria-label="${dayLabel(d.date)}: ${has ? `${fmt(d.kcal)} calories` : 'nothing written down'}">
+                  aria-label="${esc(t('dayAria', dayLabel(d.date), has ? fmt(d.kcal) : null))}">
                   <span class="day-bar-label">${dayLabel(d.date)}</span>
                   <span class="track">
                     <span class="fill${has && d.kcal > state.goal ? ' over' : ''}" style="width:${pct}%"></span>
@@ -461,11 +661,11 @@
                 </button>`;
             }).join('')}
             <div class="legend">
-              <span><i class="swatch"></i>Kept to my goal</span>
-              <span><i class="swatch over"></i>Ate more than my goal</span>
-              <span><i class="swatch goal"></i>My goal: ${fmt(state.goal)} calories</span>
+              <span><i class="swatch"></i>${t('legendWithin')}</span>
+              <span><i class="swatch over"></i>${t('legendOver')}</span>
+              <span><i class="swatch goal"></i>${t('legendGoal', fmt(state.goal))}</span>
             </div>
-            ${state.daysShown < 90 ? '<button type="button" class="btn-text" data-act="more-days">Show more days</button>' : ''}
+            ${state.daysShown < 90 ? `<button type="button" class="btn-text" data-act="more-days">${t('moreDays')}</button>` : ''}
           </div>
         </section>`;
     },
@@ -482,32 +682,37 @@
           storage.estimate ? storage.estimate().catch(() => null) : null,
         ]);
         const rows = [
-          ['Opened from home screen', isStandalone() ? 'Yes' : 'No'],
-          ['Protected storage', persisted === true ? 'Yes' : persisted === false ? 'No' : 'Unknown'],
-          ['Foods written down', fmt(foodCount)],
-          ['Weigh-ins', fmt(weightCount)],
+          [t('kvHome'), isStandalone() ? t('yes') : t('no')],
+          [t('kvProtected'), persisted === true ? t('yes') : persisted === false ? t('no') : t('unknown')],
+          [t('kvFoods'), fmt(foodCount)],
+          [t('kvWeighIns'), fmt(weightCount)],
         ];
-        if (estimate && estimate.usage !== undefined) rows.push(['Space used', `${(estimate.usage / 1024).toFixed(0)} KB`]);
+        if (estimate && estimate.usage !== undefined) rows.push([t('kvSpace'), `${(estimate.usage / 1024).toFixed(0)} KB`]);
         extra = `<div class="card">
-            <p class="muted small">For people who are comfortable with files.</p>
-            <button type="button" class="btn-small wide" data-act="export-csv">Download a spreadsheet (CSV)</button>
-            <button type="button" class="btn-small wide" data-act="import">Bring back a saved copy</button>
+            <p class="muted small">${t('extraIntro')}</p>
+            <button type="button" class="btn-small wide" data-act="export-csv">${t('exportCsv')}</button>
+            <button type="button" class="btn-small wide" data-act="import">${t('importCopy')}</button>
             <ul class="kv">${rows.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join('')}</ul>
           </div>`;
       }
       return `<section class="screen">
-          <h1 class="xl" tabindex="-1">More</h1>
+          <h1 class="xl" tabindex="-1">${t('moreTitle')}</h1>
           ${noticeHtml()}
           <div class="stack">
             <button type="button" class="choice" data-act="open-goal">
               ${icon('target', 'lead-icon')}
-              <span class="choice-text"><b>Change my daily goal</b><span class="choice-sub">Now: ${fmt(state.goal)} calories a day</span></span>
+              <span class="choice-text"><b>${t('changeGoal')}</b><span class="choice-sub">${t('goalNow', fmt(state.goal))}</span></span>
               ${icon('next')}
             </button>
-            ${navRow('backup', 'shield', 'Keep my diary safe', lastBackup ? `Last copy saved: ${ago(lastBackup)}` : 'No copy saved yet')}
-            ${navRow('help', 'phone', 'Put this app on my home screen', isStandalone() ? 'Already done' : 'Step-by-step help')}
+            ${navRow('backup', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
+            ${navRow('help', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
+            <button type="button" class="choice" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">
+              ${icon('globe', 'lead-icon')}
+              <span class="choice-text"><b>${t('language')}</b><span class="choice-sub">${t('langName')} → ${t('otherLangName')}</span></span>
+              ${icon('next')}
+            </button>
           </div>
-          <button type="button" class="btn-text" data-act="toggle-advanced">${state.advanced ? 'Hide extra options' : 'Show extra options'}</button>
+          <button type="button" class="btn-text" data-act="toggle-advanced">${state.advanced ? t('hideExtra') : t('showExtra')}</button>
           ${extra}
         </section>`;
     },
@@ -516,23 +721,23 @@
       const lastBackup = await DB.getSetting('lastBackup', null);
       const age = lastBackup ? (Date.now() - new Date(lastBackup).getTime()) / DAY_MS : Infinity;
       let status;
-      if (!lastBackup) status = '<div class="warnbox"><div class="box-title">You have not saved a copy yet</div><div>We suggest saving a copy once a week.</div></div>';
-      else if (age > BACKUP_REMINDER_DAYS) status = `<div class="warnbox"><div class="box-title">Last copy saved: ${ago(lastBackup)}</div><div>We suggest saving a copy once a week.</div></div>`;
-      else status = `<div class="okbox"><div class="box-title">Last copy saved: ${ago(lastBackup)}</div></div>`;
+      if (!lastBackup) status = `<div class="warnbox"><div class="box-title">${t('backupNotYet')}</div><div>${t('backupWeekly')}</div></div>`;
+      else if (age > BACKUP_REMINDER_DAYS) status = `<div class="warnbox"><div class="box-title">${t('backupLastTitle', ago(lastBackup))}</div><div>${t('backupWeekly')}</div></div>`;
+      else status = `<div class="okbox"><div class="box-title">${t('backupLastTitle', ago(lastBackup))}</div></div>`;
       return `${topbar('@prev')}
         <section class="screen">
-          <h1 tabindex="-1">Keep your diary safe</h1>
-          <p class="lead">Your diary is kept only on this phone. If the app is deleted, or you get a new phone, your diary is lost unless you have saved a copy.</p>
+          <h1 tabindex="-1">${t('backupScreenTitle')}</h1>
+          <p class="lead">${t('backupLead')}</p>
           ${status}
           ${noticeHtml()}
-          <button type="button" class="btn-primary" data-act="export-json">Save a copy now</button>
+          <button type="button" class="btn-primary" data-act="export-json">${t('backupSaveNow')}</button>
           <div class="card">
-            <div class="box-title">What happens next</div>
-            <p class="muted">Your phone will ask where to keep the copy. Tap <b>Save to Files</b>, then <b>iCloud Drive</b>, then <b>Save</b>.</p>
+            <div class="box-title">${t('backupNextTitle')}</div>
+            <p class="muted">${t('backupNextText')}</p>
           </div>
           <div class="card">
-            <div class="box-title">Getting your diary back</div>
-            <p class="muted">On a new phone, open this app, go to <b>More</b>, tap <b>Show extra options</b>, then <b>Bring back a saved copy</b>.</p>
+            <div class="box-title">${t('backupRestoreTitle')}</div>
+            <p class="muted">${t('backupRestoreText')}</p>
           </div>
         </section>`;
     },
@@ -541,15 +746,15 @@
       const step = (n, body) => `<div class="card step-card"><span class="stepnum">${n}</span>${body}</div>`;
       return `${topbar('@prev')}
         <section class="screen">
-          <h1 tabindex="-1">Put this app on your home screen</h1>
+          <h1 tabindex="-1">${t('helpTitle')}</h1>
           ${isStandalone()
-            ? '<div class="okbox"><div class="box-title">You have already done this</div><div>You are using the diary from your home screen. Well done!</div></div>'
-            : '<p class="muted">Then you can open it like any other app, and your diary stays safe.</p>'}
+            ? `<div class="okbox"><div class="box-title">${t('helpDoneTitle')}</div><div>${t('helpDoneText')}</div></div>`
+            : `<p class="muted">${t('helpIntro')}</p>`}
           <div class="stack">
-            ${step(1, '<p>Open this page in <b>Safari</b>, the compass app.</p>')}
-            ${step(2, `<div class="stack"><p>Tap the <b>Share</b> button at the bottom of the screen. It looks like this:</p><span class="share-pic">${icon('share')}</span></div>`)}
-            ${step(3, '<p>Scroll down and tap <b>Add to Home Screen</b>.</p>')}
-            ${step(4, '<p>Tap <b>Add</b>. From now on, always open the diary from its new icon. The copy in Safari keeps a separate diary.</p>')}
+            ${step(1, `<p>${t('help1')}</p>`)}
+            ${step(2, `<div class="stack"><p>${t('help2')}</p><span class="share-pic">${icon('share')}</span></div>`)}
+            ${step(3, `<p>${t('help3')}</p>`)}
+            ${step(4, `<p>${t('help4')}</p>`)}
           </div>
         </section>`;
     },
@@ -561,7 +766,7 @@
   function summarizeFoods(all) {
     const byName = new Map();
     for (const f of all) {
-      const key = f.name.trim().toLowerCase();
+      const key = norm(f.name);
       const when = f.createdAt || f.date;
       const e = byName.get(key);
       if (!e) byName.set(key, { key, name: f.name, kcal: f.kcal, portion: f.portion, count: 1, last: when });
@@ -574,29 +779,29 @@
   }
 
   function foodResults() {
-    const q = state.query.trim().toLowerCase();
+    const q = norm(state.query);
     const mineRow = (m, i) => `<button type="button" class="choice" data-act="add-again" data-idx="${i}">
-        <span class="choice-text"><b>${esc(m.name)}</b><span class="choice-sub">Same as last time: ${fmt(m.kcal)} calories</span></span>
+        <span class="choice-text"><b>${esc(m.name)}</b><span class="choice-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
         ${icon('plus', 'accent')}
       </button>`;
     const builtRow = (f) => `<button type="button" class="choice" data-act="pick-food" data-idx="${FOODS.indexOf(f)}">
-        <span class="choice-text"><b>${esc(f.name)}</b><span class="choice-sub">About ${fmt(f.kcal)} calories</span></span>
+        <span class="choice-text"><b>${esc(foodName(f))}</b><span class="choice-sub">${t('about', fmt(f.kcal))}</span></span>
         ${icon('next')}
       </button>`;
 
     if (!q) {
       const usual = state.mine.slice(0, 4);
-      return (usual.length ? `<h2>You often have</h2><div class="stack">${usual.map(mineRow).join('')}</div>` : '')
-        + FOOD_GROUPS.map((g) => `<h2>${esc(g)}</h2><div class="stack">${FOODS.filter((f) => f.group === g).map(builtRow).join('')}</div>`).join('');
+      return (usual.length ? `<h2>${t('oftenHave')}</h2><div class="stack">${usual.map(mineRow).join('')}</div>` : '')
+        + FOOD_GROUPS.map((g) => `<h2>${esc(groupName(g))}</h2><div class="stack">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
     }
 
     const mine = state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q));
     const mineKeys = new Set(mine.map(([m]) => m.key));
-    const built = FOODS.filter((f) => f.name.toLowerCase().includes(q) && !mineKeys.has(f.name.toLowerCase()));
+    const built = FOODS.filter((f) => f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
     if (!mine.length && !built.length) {
-      return `<p class="muted">We could not find "${esc(state.query.trim())}". You can type it in yourself below.</p>`;
+      return `<p class="muted">${t('notFound', esc(state.query.trim()))}</p>`;
     }
-    return `<h2>Foods that match</h2><div class="stack">${mine.map(([m, i]) => mineRow(m, i)).join('')}${built.map(builtRow).join('')}</div>`;
+    return `<h2>${t('matches')}</h2><div class="stack">${mine.map(([m, i]) => mineRow(m, i)).join('')}${built.map(builtRow).join('')}</div>`;
   }
 
   // ---------- Rendering & navigation ----------
@@ -625,10 +830,10 @@
     const food = { date: state.date, name, kcal, meal: state.meal, createdAt: new Date().toISOString() };
     if (portion) food.portion = portion;
     const id = await DB.addFood(food);
-    const where = state.date === todayKey() ? state.meal : `${state.meal} on ${shortDate(state.date)}`;
+    const date = state.date === todayKey() ? null : shortDate(state.date);
     await go('today', {
       query: '',
-      notice: { text: `Added to ${where}: ${name}, ${fmt(kcal)} calories.`, undo: { type: 'add', id } },
+      notice: { text: t('added', mealName(state.meal), date, name, fmt(kcal)), undo: { type: 'add', id } },
     });
   }
 
@@ -687,9 +892,16 @@
       const dlg = $('#share-dialog');
       const goBtn = $('#share-dialog-go');
       const cancel = $('#share-dialog-cancel');
-      const done = (ok) => { goBtn.onclick = null; cancel.onclick = null; dlg.close(); resolve(ok); };
+      // Every way out (Save, Cancel, or the dialog being dismissed) must resolve,
+      // otherwise the app keeps ignoring taps while it waits.
+      const done = (ok) => {
+        goBtn.onclick = null; cancel.onclick = null; dlg.onclose = null;
+        if (dlg.open) dlg.close();
+        resolve(ok);
+      };
       goBtn.onclick = () => navigator.share({ files: [file] }).then(() => done(true), () => done(false));
       cancel.onclick = () => done(false);
+      dlg.onclose = () => done(false);
       dlg.showModal();
     });
   }
@@ -699,7 +911,7 @@
     const file = new File([JSON.stringify(data, null, 2)], `food-diary-copy-${todayKey()}.json`, { type: 'application/json' });
     if (!(await saveFile(file))) return;
     await DB.setSetting('lastBackup', new Date().toISOString());
-    state.notice = { text: 'A copy of your diary has been saved. Well done!' };
+    state.notice = { text: t('copySaved') };
     await render();
   }
 
@@ -716,7 +928,7 @@
     }
     const file = new File([lines.join('\n') + '\n'], `food-diary-${todayKey()}.csv`, { type: 'text/csv' });
     if (await saveFile(file)) {
-      state.notice = { text: 'Spreadsheet saved.' };
+      state.notice = { text: t('csvSaved') };
       await render();
     }
   }
@@ -724,12 +936,12 @@
   // Validates a backup file and returns clean records (unknown fields dropped).
   function cleanBackup(d) {
     if (!d || d.app !== 'calorie-tracker' || !Array.isArray(d.foods) || !Array.isArray(d.weights)) {
-      throw new Error('this is not a copy of this diary');
+      throw new Error(t('importNotCopy'));
     }
     const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
     const foods = d.foods.map((f, i) => {
       if (!f || !isDate(f.date) || typeof f.name !== 'string' || !Number.isFinite(f.kcal) || f.kcal < 0) {
-        throw new Error(`food number ${i + 1} is damaged`);
+        throw new Error(t('importFoodDamaged', i + 1));
       }
       const clean = {
         date: f.date,
@@ -743,7 +955,7 @@
       return clean;
     });
     const weights = d.weights.map((w, i) => {
-      if (!w || !isDate(w.date) || !Number.isFinite(w.kg) || w.kg <= 0) throw new Error(`weight number ${i + 1} is damaged`);
+      if (!w || !isDate(w.date) || !Number.isFinite(w.kg) || w.kg <= 0) throw new Error(t('importWeightDamaged', i + 1));
       return { date: w.date, kg: w.kg, updatedAt: typeof w.updatedAt === 'string' ? w.updatedAt : `${w.date}T12:00:00` };
     });
     const settings = [{ key: 'onboarded', value: true }];
@@ -752,6 +964,23 @@
     if (goal && Number.isInteger(goal.value) && goal.value >= GOAL_MIN && goal.value <= GOAL_MAX) settings.push({ key: 'goal', value: goal.value });
     const goalType = find('goalType');
     if (goalType && GOAL_TYPES[goalType.value]) settings.push({ key: 'goalType', value: goalType.value });
+    const lang = find('lang');
+    if (lang && (lang.value === 'ja' || lang.value === 'en')) settings.push({ key: 'lang', value: lang.value });
+    const sex = find('sex');
+    if (sex && SEXES.includes(sex.value)) settings.push({ key: 'sex', value: sex.value });
+    const birthYear = find('birthYear');
+    const thisYear = new Date().getFullYear();
+    if (birthYear && Number.isInteger(birthYear.value) && birthYear.value >= thisYear - AGE_MAX && birthYear.value <= thisYear - AGE_MIN) {
+      settings.push({ key: 'birthYear', value: birthYear.value });
+    }
+    const heightCm = find('heightCm');
+    if (heightCm && Number.isFinite(heightCm.value) && heightCm.value >= HEIGHT_MIN && heightCm.value <= HEIGHT_MAX) {
+      settings.push({ key: 'heightCm', value: heightCm.value });
+    }
+    const activity = find('activity');
+    if (activity && ACTIVITY[activity.value] !== undefined) settings.push({ key: 'activity', value: activity.value });
+    const goalWeight = find('goalWeight');
+    if (goalWeight && Number.isFinite(goalWeight.value) && goalWeight.value > 0) settings.push({ key: 'goalWeight', value: goalWeight.value });
     return { foods, weights, settings, exportedAt: d.exportedAt };
   }
 
@@ -760,22 +989,24 @@
     try {
       data = cleanBackup(JSON.parse(await file.text()));
     } catch (err) {
-      state.notice = { kind: 'error', text: `This file cannot be used: ${err instanceof SyntaxError ? 'it is not a saved copy of the diary' : err.message}.` };
+      state.notice = { kind: 'error', text: t('importBad', err instanceof SyntaxError ? t('importNotCopy') : err.message) };
       await render();
       return;
     }
-    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'an unknown date';
+    const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString(I18N.locale) : t('unknownDate');
     const ok = await confirmDialog(
-      'Replace your diary with this copy?',
-      `This copy was saved on ${when}. It has ${fmt(data.foods.length)} foods and ${fmt(data.weights.length)} weigh-ins.\n\nEverything in the diary now will be replaced by this copy.`,
-      'Yes, replace it',
+      t('restoreTitle'),
+      t('restoreText', when, fmt(data.foods.length), fmt(data.weights.length)),
+      t('restoreYes'),
     );
     if (!ok) return;
     await DB.replaceAll(data);
     state.goal = await DB.getSetting('goal', DEFAULT_GOAL);
     state.goalType = await DB.getSetting('goalType', 'keep');
+    await loadProfile();
+    I18N.setLang(await DB.getSetting('lang', I18N.lang));
     state.date = todayKey();
-    await go('today', { notice: { text: 'Your diary has been brought back.' } });
+    await go('today', { notice: { text: t('restored') } });
   }
 
   async function ensurePersistentStorage() {
@@ -795,6 +1026,12 @@
       return go(el.dataset.to);
     },
 
+    'set-lang': async (el) => {
+      I18N.setLang(el.dataset.lang);
+      await DB.setSetting('lang', I18N.lang);
+      await render();
+    },
+
     step: (el) => {
       const input = document.getElementById(el.dataset.target);
       const dec = Number(el.dataset.dec);
@@ -807,27 +1044,86 @@
     },
 
     // Goal
+    'pick-sex': (el) => {
+      state.ageDraft = $('#age-input').value; // keep a typed age across the redraw
+      state.sex = el.dataset.sex;
+      return render();
+    },
+    'about-next': () => {
+      if (!SEXES.includes(state.sex)) {
+        const err = $('#sex-error');
+        err.textContent = t('sexMissing');
+        err.hidden = false;
+        err.scrollIntoView({ block: 'center' });
+        return;
+      }
+      const age = parseNum($('#age-input').value);
+      if (!(Number.isInteger(age) && age >= AGE_MIN && age <= AGE_MAX)) {
+        fieldError('age-input', t('rangeError', AGE_MIN, AGE_MAX));
+        return;
+      }
+      state.birthYear = new Date().getFullYear() - age;
+      state.ageDraft = null;
+      return go('body');
+    },
+    'body-next': () => {
+      const cm = parseNum($('#height-input').value);
+      if (!(cm >= HEIGHT_MIN && cm <= HEIGHT_MAX)) {
+        fieldError('height-input', t('rangeError', HEIGHT_MIN, HEIGHT_MAX));
+        return;
+      }
+      const kg = parseNum($('#body-weight-input').value);
+      if (!(kg >= 20 && kg <= 400)) {
+        fieldError('body-weight-input', t('weightRange', 20, 400));
+        return;
+      }
+      state.heightCm = Math.round(cm);
+      state.bodyKg = Math.round(kg * 10) / 10;
+      return go('activity');
+    },
+    'pick-activity': (el) => { state.activity = el.dataset.activity; return go('goalType'); },
     'pick-goal-type': (el) => {
       state.goalType = el.dataset.type;
-      state.goalDraft = GOAL_TYPES[el.dataset.type].kcal;
-      return go('goalSet');
+      const p = plan(el.dataset.type);
+      state.goalDraft = p ? p.goal : DEFAULT_GOAL + GOAL_TYPES[el.dataset.type].adjust;
+      return go('goalSet', { suggested: true });
     },
-    'goal-help': () => go('goalType'),
-    'open-goal': () => go('goalSet', { goalDraft: state.goal, goalFrom: 'more' }),
+    'goal-help': () => go('about'),
+    'open-goal': async () => {
+      // Start from the saved answers, not ones from an earlier visit that was never saved.
+      await loadProfile();
+      return go('goalSet', { goalDraft: state.goal, goalFrom: 'more', suggested: false });
+    },
+    // From the "your weight has changed" reminder on Today.
+    'review-goal': async () => {
+      await loadProfile();
+      return go('about', { goalFrom: 'more', suggested: false, goalDraft: state.goal });
+    },
     'save-goal': async () => {
       const goal = parseNum($('#goal-input').value);
       if (!(Number.isInteger(goal) && goal >= GOAL_MIN && goal <= GOAL_MAX)) {
-        fieldError('goal-input', `Please choose a number between ${fmt(GOAL_MIN)} and ${fmt(GOAL_MAX)}.`);
+        fieldError('goal-input', t('rangeError', fmt(GOAL_MIN), fmt(GOAL_MAX)));
         return;
       }
       await DB.setSetting('goal', goal);
       await DB.setSetting('goalType', state.goalType);
+      if (state.suggested && profileReady()) {
+        await DB.setSetting('sex', state.sex);
+        await DB.setSetting('birthYear', state.birthYear);
+        await DB.setSetting('heightCm', state.heightCm);
+        await DB.setSetting('activity', state.activity);
+        // The weight entered during setup is today's weigh-in, unless it matches the last one.
+        if (state.bodyKg !== state.latestKg) await DB.setWeight(todayKey(), state.bodyKg);
+        await DB.setSetting('goalWeight', state.bodyKg);
+        state.latestKg = state.bodyKg;
+      }
       state.goal = goal;
       if (state.goalFrom === 'onboarding') {
         await DB.setSetting('onboarded', true);
-        await go('today', { notice: { text: 'You are all set! Tap "Add what I ate" each time you eat something.' } });
+        await DB.setSetting('lang', I18N.lang);
+        await go('today', { notice: { text: t('allSet') } });
       } else {
-        await go('more', { notice: { text: `Your daily goal is now ${fmt(goal)} calories.` } });
+        await go('more', { notice: { text: t('goalSaved', fmt(goal)) } });
       }
     },
 
@@ -842,7 +1138,7 @@
       const food = await DB.getFood(Number(el.dataset.id));
       if (!food) return;
       await DB.deleteFood(food.id);
-      state.notice = { text: `Removed ${food.name}.`, undo: { type: 'remove', food } };
+      state.notice = { text: t('removed', food.name), undo: { type: 'remove', food } };
       await render();
     },
     undo: async () => {
@@ -850,17 +1146,21 @@
       if (!u) return;
       if (u.type === 'add') await DB.deleteFood(u.id);
       else await DB.addFood(u.food);
-      state.notice = { text: 'Okay, that has been undone.' };
+      state.notice = { text: t('undone') };
       await render();
     },
 
     // Adding food
     'start-add': () => go('food', { query: '', meal: defaultMeal() }),
     'pick-meal': (el) => go('food', { meal: el.dataset.meal }),
-    'pick-food': (el) => go('portion', { food: FOODS[Number(el.dataset.idx)] }),
+    'pick-food': (el) => {
+      const food = FOODS[Number(el.dataset.idx)];
+      // Nothing to ask about portions for tea or water.
+      return food.kcal === 0 ? addEntry(foodName(food), 0) : go('portion', { food });
+    },
     'pick-portion': (el) => {
       const p = PORTIONS[Number(el.dataset.idx)];
-      return addEntry(state.food.name, portionKcal(state.food, p), p.label.toLowerCase());
+      return addEntry(foodName(state.food), portionKcal(state.food, p), p.key);
     },
     'add-again': (el) => {
       const m = state.mine[Number(el.dataset.idx)];
@@ -868,10 +1168,10 @@
     },
     'start-custom': () => go('custom', { customName: state.query.trim() }),
     'add-custom': () => {
-      const name = $('#custom-name').value.trim().slice(0, 60) || 'Something else';
+      const name = $('#custom-name').value.trim().slice(0, 60) || t('customDefaultName');
       const kcal = Math.round(parseNum($('#custom-kcal').value));
       if (!(kcal >= 1 && kcal <= 10000)) {
-        fieldError('custom-kcal', 'Please choose a number between 1 and 10,000.');
+        fieldError('custom-kcal', t('rangeError', 1, fmt(10000)));
         return;
       }
       return addEntry(name, kcal);
@@ -881,18 +1181,18 @@
     'save-weight': async () => {
       const kg = parseNum($('#weight-input').value);
       if (!(kg >= 20 && kg <= 400)) {
-        fieldError('weight-input', 'Please choose a weight between 20 and 400 kg.');
+        fieldError('weight-input', t('weightRange', 20, 400));
         return;
       }
       const value = Math.round(kg * 10) / 10;
       await DB.setWeight(state.date, value);
-      await go('today', { notice: { text: `Weight saved: ${value.toFixed(1)} kg.` } });
+      await go('today', { notice: { text: t('weightSaved', value.toFixed(1)) } });
     },
     'remove-weight': async () => {
-      const ok = await confirmDialog('Remove this weight?', `The weight saved for ${shortDate(state.date)} will be removed.`, 'Yes, remove it');
+      const ok = await confirmDialog(t('removeWeightTitle'), t('removeWeightText', shortDate(state.date)), t('removeWeightYes'));
       if (!ok) return;
       await DB.deleteWeight(state.date);
-      await go('today', { notice: { text: 'Weight removed.' } });
+      await go('today', { notice: { text: t('weightRemoved') } });
     },
 
     // Progress / More
@@ -929,9 +1229,10 @@
     }
   });
 
-  // "Done" on the keyboard closes it.
+  // "Done" on the keyboard closes it. While a Japanese IME is still converting,
+  // Enter confirms the kana/kanji instead, so leave that alone.
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || !e.target.matches('input')) return;
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || !e.target.matches('input')) return;
     e.preventDefault();
     if (e.target.id === 'custom-name') $('#custom-kcal').focus();
     else e.target.blur();
@@ -948,10 +1249,10 @@
   // If the app stays open past midnight, move "Today" forward when it comes back.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
-    const t = todayKey();
-    if (t === lastSeenToday) return;
-    if (state.date === lastSeenToday) state.date = t;
-    lastSeenToday = t;
+    const today = todayKey();
+    if (today === lastSeenToday) return;
+    if (state.date === lastSeenToday) state.date = today;
+    lastSeenToday = today;
     if (TABS.includes(state.screen)) render().catch(showError);
   });
 
@@ -959,17 +1260,21 @@
 
   // ---------- Start ----------
   async function init() {
+    I18N.setLang(I18N.defaultLang);
     try {
       await DB.open();
-      const [goal, goalType, onboarded, foodCount, weightCount] = await Promise.all([
+      const [goal, goalType, onboarded, lang, foodCount, weightCount] = await Promise.all([
         DB.getSetting('goal', DEFAULT_GOAL),
         DB.getSetting('goalType', 'keep'),
         DB.getSetting('onboarded', false),
+        DB.getSetting('lang', null),
         DB.count('foods'),
         DB.count('weights'),
       ]);
+      if (lang) I18N.setLang(lang);
       state.goal = goal;
       state.goalType = GOAL_TYPES[goalType] ? goalType : 'keep';
+      await loadProfile();
       if (!onboarded) {
         if (foodCount + weightCount > 0) {
           // Existing users of the earlier version skip the welcome screens.
@@ -977,13 +1282,12 @@
         } else {
           state.screen = 'welcome';
           state.goalFrom = 'onboarding';
-          state.goalDraft = GOAL_TYPES[state.goalType].kcal;
         }
       }
     } catch (err) {
       $('#app').innerHTML = `<section class="screen"><div class="card">
-          <h1>Your diary cannot be opened</h1>
-          <p>This browser is blocking storage on the phone, so nothing can be saved. Make sure you are not using Private Browsing, then open the app again.</p>
+          <h1>${t('fatalTitle')}</h1>
+          <p>${t('fatalText')}</p>
           <p class="muted small">${esc(err.message || err)}</p>
         </div></section>`;
       return;

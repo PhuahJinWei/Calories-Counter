@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Food Diary</title>
-  <meta name="description" content="A simple food and weight diary. Your diary stays on your phone.">
-  <meta name="theme-color" content="#f7f5ef" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111513" media="(prefers-color-scheme: dark)">
+  <title>食事日記</title>
+  <meta name="description" content="かんたんな食事と体重の日記。記録はあなたのスマホの中だけに保存されます。">
+  <meta name="theme-color" content="#fff6f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#160f13" media="(prefers-color-scheme: dark)">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Food Diary">
+  <meta name="apple-mobile-web-app-title" content="食事日記">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -20,24 +20,25 @@
   <!-- Each screen is drawn into #app by app.js -->
   <main id="app"></main>
 
-  <nav class="tabbar" aria-label="Main sections" hidden>
+  <!-- Text marked data-t="key" is filled in from i18n.js -->
+  <nav class="tabbar" data-t-aria="tabsAria" hidden>
     <button type="button" data-act="tab" data-to="today">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/></svg>
-      <span>Today</span>
+      <span data-t="tabToday">今日</span>
     </button>
     <button type="button" data-act="tab" data-to="progress">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20v-8M12 20V5M19 20v-5"/></svg>
-      <span>My progress</span>
+      <span data-t="tabProgress">わたしの記録</span>
     </button>
     <button type="button" data-act="tab" data-to="more">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      <span>More</span>
+      <span data-t="tabMore">その他</span>
     </button>
   </nav>
 
   <div id="error-box" class="error-box" role="alert" hidden>
     <span id="error-text" class="notice-text"></span>
-    <button type="button" class="btn-small" id="error-close">Close</button>
+    <button type="button" class="btn-small" id="error-close" data-t="close">閉じる</button>
   </div>
 
   <input type="file" id="import-file" accept=".json,application/json" class="visually-hidden" tabindex="-1" aria-hidden="true">
@@ -46,20 +47,21 @@
     <h2 id="confirm-title"></h2>
     <p id="confirm-text"></p>
     <div class="dialog-actions">
-      <button type="button" class="btn-primary" id="confirm-yes">Yes</button>
-      <button type="button" class="btn-secondary center" id="confirm-no">No, go back</button>
+      <button type="button" class="btn-primary" id="confirm-yes"></button>
+      <button type="button" class="btn-secondary center" id="confirm-no" data-t="confirmNo">いいえ、戻ります</button>
     </div>
   </dialog>
 
   <dialog id="share-dialog">
-    <h2>Your copy is ready</h2>
-    <p>Tap <b>Save</b>, then choose <b>Save to Files</b>.</p>
+    <h2 data-t="shareTitle">コピーの準備ができました</h2>
+    <p data-t="shareText"></p>
     <div class="dialog-actions">
-      <button type="button" class="btn-primary" id="share-dialog-go">Save</button>
-      <button type="button" class="btn-secondary center" id="share-dialog-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="share-dialog-go" data-t="shareGo">保存</button>
+      <button type="button" class="btn-secondary center" id="share-dialog-cancel" data-t="shareCancel">キャンセル</button>
     </div>
   </dialog>
 
+  <script src="i18n.js"></script>
   <script src="db.js"></script>
   <script src="foods.js"></script>
   <script src="app.js"></script>

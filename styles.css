@@ -1,46 +1,47 @@
+/* Rose theme. "Over goal" uses amber so it never looks like the pink accent. */
 :root {
-  --bg: #f7f5ef;
+  --bg: #fff6f8;
   --card: #ffffff;
-  --ink: #1d2422;
-  --muted: #4f5753;
-  --line: #ddd8cc;
-  --line-soft: #ece8de;
-  --accent: #1f6b4f;
+  --ink: #2b1d24;
+  --muted: #5f4c56;
+  --line: #efd5df;
+  --line-soft: #f8e6ed;
+  --accent: #b3245e;
   --on-accent: #ffffff;
-  --accent-soft: #e3efe8;
-  --accent-soft-ink: #14432f;
-  --warn: #a3461a;
-  --warn-soft: #fbebdd;
-  --warn-ink: #5e2a0e;
-  --over-bar: #e8a06a;
-  --danger: #a8251a;
-  --danger-soft: #fbe4e1;
+  --accent-soft: #fde4ee;
+  --accent-soft-ink: #6e1238;
+  --warn: #9a5200;
+  --warn-soft: #fff0d9;
+  --warn-ink: #5c3200;
+  --over-bar: #e6a23c;
+  --danger: #b42318;
+  --danger-soft: #fde4e1;
   --danger-ink: #6b140d;
-  --portion-fill: #cfe3d7;
+  --portion-fill: #f9cfe0;
   --ios-blue: #1d6ae5;
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #111513;
-    --card: #1b201e;
-    --ink: #eef1ee;
-    --muted: #a9b2ad;
-    --line: #353c39;
-    --line-soft: #2a302d;
-    --accent: #5cc398;
-    --on-accent: #0b1a13;
-    --accent-soft: #1d3a2d;
-    --accent-soft-ink: #c3e8d5;
-    --warn: #f2a676;
-    --warn-soft: #3a2516;
-    --warn-ink: #f7d3b8;
-    --over-bar: #c98152;
+    --bg: #160f13;
+    --card: #22181d;
+    --ink: #f7edf1;
+    --muted: #c0aab4;
+    --line: #43313a;
+    --line-soft: #31242b;
+    --accent: #f27aae;
+    --on-accent: #2b0616;
+    --accent-soft: #4a1d31;
+    --accent-soft-ink: #ffd5e6;
+    --warn: #f3b65a;
+    --warn-soft: #3b2a12;
+    --warn-ink: #fbe0b3;
+    --over-bar: #c88a2a;
     --danger: #ff8a80;
     --danger-soft: #3d1a17;
     --danger-ink: #ffd3ce;
-    --portion-fill: #24493a;
+    --portion-fill: #5b2741;
     --ios-blue: #6ea8ff;
   }
 }
@@ -52,7 +53,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 19px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font: 19px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+  line-break: strict;
   -webkit-tap-highlight-color: transparent;
   padding: env(safe-area-inset-top) 0 calc(28px + env(safe-area-inset-bottom));
 }
