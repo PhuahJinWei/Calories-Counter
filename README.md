@@ -27,7 +27,7 @@ All of these numbers are at the top of `app.js`.
 |---|---|
 | `index.html` | Page shell: tab bar and dialogs (the screens are drawn by `app.js`) |
 | `styles.css` | Look & feel (light + dark mode) |
-| `app.js` | App logic: screens (Today, My progress, More), adding food, weigh-ins, backup/restore |
+| `app.js` | App logic: screens (Today, My progress with the month calendar, More), adding food, weigh-ins, backup/restore |
 | `i18n.js` | All on-screen text, in Japanese and English. Edit wording here |
 | `foods.js` | Built-in Japanese food list (with kana readings for search, English names and rough calories). Edit freely |
 | `db.js` | On-device database (IndexedDB) |

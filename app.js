@@ -70,7 +70,8 @@
     mine: [], // the user's own past foods, most used first
     customName: '',
     notice: null, // { text, kind?, undo? }
-    daysShown: 7,
+    calMonth: todayKey().slice(0, 7), // 'YYYY-MM' shown in the progress calendar
+    calMode: 'kcal', // 'kcal' | 'weight'
     advanced: false,
   };
   let lastSeenToday = state.date;
@@ -302,6 +303,91 @@
         </div>` : ''}
       </div>
       <p class="field-error" id="${id}-error" hidden></p>`;
+  }
+
+  // Month calendar for the progress screen. Calories mode marks each day ○ (within goal)
+  // or △ (over), the way Japanese forms do; weight mode shows that day's weigh-in.
+  // Weeks start on Sunday, like Japanese calendars.
+  function calendarCard(foods, weights) {
+    const today = todayKey();
+    const thisMonth = today.slice(0, 7);
+    // Months can go back to the first month with any entry, and never into the future.
+    let firstMonth = thisMonth;
+    for (const f of foods) if (f.date.slice(0, 7) < firstMonth) firstMonth = f.date.slice(0, 7);
+    if (weights.length && weights[0].date.slice(0, 7) < firstMonth) firstMonth = weights[0].date.slice(0, 7);
+    const month = state.calMonth < firstMonth ? firstMonth : state.calMonth > thisMonth ? thisMonth : state.calMonth;
+    state.calMonth = month;
+
+    const [y, m] = month.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const lead = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
+    const prefix = `${month}-`;
+    const kcalByDay = new Map();
+    for (const f of foods) if (f.date.startsWith(prefix)) kcalByDay.set(f.date, (kcalByDay.get(f.date) || 0) + f.kcal);
+    const monthWeights = weights.filter((w) => w.date.startsWith(prefix)); // sorted by date (the key)
+    const kgByDay = new Map(monthWeights.map((w) => [w.date, w.kg]));
+
+    // Month summary
+    const logged = [...kcalByDay.values()];
+    const within = logged.filter((v) => v <= state.goal).length;
+    const avg = logged.length ? logged.reduce((a, b) => a + b, 0) / logged.length : null;
+    const change = monthWeights.length >= 2
+      ? Math.round((monthWeights[monthWeights.length - 1].kg - monthWeights[0].kg) * 10) / 10 : null;
+    const summary = [
+      [t('calAvg'), avg === null ? '—' : t('kcal', fmt(avg))],
+      [t('calWithin'), logged.length ? t('calWithinValue', within, logged.length) : '—'],
+      [t('calWeightChange'), change === null ? '—' : `${change > 0 ? '+' : change < 0 ? '−' : '±'}${Math.abs(change).toFixed(1)} kg`],
+      [t('calLogged'), t('calDays', logged.length)],
+    ];
+
+    // 2023-01-01 was a Sunday: use it to get localized weekday initials (日 月 … / S M …).
+    const weekdays = [0, 1, 2, 3, 4, 5, 6].map((i) => new Date(2023, 0, 1 + i).toLocaleDateString(I18N.locale, { weekday: 'narrow' }));
+    let cells = '<span class="cal-blank"></span>'.repeat(lead);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = `${prefix}${pad(d)}`;
+      const dow = (lead + d - 1) % 7;
+      let cls = `cal-day${dow === 0 ? ' sun' : dow === 6 ? ' sat' : ''}${key === today ? ' is-today' : ''}`;
+      let mark = '';
+      let val = '';
+      let aria = t('calAriaEmpty', longDate(key));
+      if (state.calMode === 'kcal' && kcalByDay.has(key)) {
+        const kcal = kcalByDay.get(key);
+        const over = kcal > state.goal;
+        cls += over ? ' over' : ' ok';
+        mark = over ? '△' : '○';
+        val = fmt(kcal);
+        aria = t('calAriaKcal', longDate(key), val, over);
+      } else if (state.calMode === 'weight' && kgByDay.has(key)) {
+        cls += ' weighed';
+        val = kgByDay.get(key).toFixed(1);
+        aria = t('calAriaWeight', longDate(key), val);
+      }
+      cells += `<button type="button" class="${cls}" data-act="open-day" data-date="${key}" ${key > today ? 'disabled' : ''} aria-label="${esc(aria)}">
+          <span class="cal-num">${d}</span>${mark ? `<span class="cal-mark" aria-hidden="true">${mark}</span>` : ''}${val ? `<span class="cal-val">${val}</span>` : ''}
+        </button>`;
+    }
+
+    const monthName = new Date(y, m - 1, 1).toLocaleDateString(I18N.locale, { year: 'numeric', month: 'long' });
+    const legend = state.calMode === 'kcal'
+      ? `<span><b class="cal-key ok">○</b>${t('calLegendWithin', fmt(state.goal))}</span><span><b class="cal-key over">△</b>${t('calLegendOver')}</span>`
+      : `<span>${t('calLegendWeight')}</span>`;
+    return `<div class="card cal-card">
+        <div class="cal-head">
+          <button type="button" class="icon-btn" data-act="cal-month" data-delta="-1" aria-label="${t('calPrev')}" ${month <= firstMonth ? 'disabled' : ''}>${icon('back')}</button>
+          <h2 class="cal-title" aria-live="polite">${monthName}</h2>
+          <button type="button" class="icon-btn" data-act="cal-month" data-delta="1" aria-label="${t('calNext')}" ${month >= thisMonth ? 'disabled' : ''}>${icon('next')}</button>
+        </div>
+        <div class="cal-stats">${summary.map(([l, v]) => `<div class="cal-stat"><div class="cal-stat-l">${l}</div><div class="cal-stat-v">${v}</div></div>`).join('')}</div>
+        <div class="seg two" role="group" aria-label="${t('calModeAria')}">
+          ${['kcal', 'weight'].map((mode) => `<button type="button" data-act="cal-mode" data-mode="${mode}" class="${state.calMode === mode ? 'on' : ''}" aria-pressed="${state.calMode === mode}">${t(mode === 'kcal' ? 'calModeKcal' : 'calModeWeight')}</button>`).join('')}
+        </div>
+        <div class="cal-grid">
+          ${weekdays.map((w, i) => `<span class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}" aria-hidden="true">${w}</span>`).join('')}
+          ${cells}
+        </div>
+        <div class="cal-legend">${legend}</div>
+        <p class="muted small">${t('tapDay')}</p>
+      </div>`;
   }
 
   // ---------- Screens ----------
@@ -676,56 +762,16 @@
         bmiLine = `<p class="muted">${t('bmiLine', bmi.toFixed(1), t(`bmi_${bmiCategory(bmi)}`))}${age ? ` · ${t('bmiTargetShort', lo.toFixed(1), hi.toFixed(1))}` : ''}</p>`;
       }
 
-      // Calories per day
-      const kcalByDay = new Map();
-      for (const f of foods) kcalByDay.set(f.date, (kcalByDay.get(f.date) || 0) + f.kcal);
-      const days = [];
-      for (let i = 0; i < state.daysShown; i++) {
-        const d = addDays(today, -i);
-        days.push({ date: d, kcal: kcalByDay.get(d) });
-      }
-      const week = days.slice(0, 7).filter((d) => d.kcal !== undefined);
-      const within = week.filter((d) => d.kcal <= state.goal).length;
-      const maxV = Math.max(2600, state.goal * 1.25, ...days.map((d) => d.kcal || 0));
-      const goalPct = (state.goal / maxV) * 100;
-      let weekSentence;
-      if (!week.length) weekSentence = t('weekNone');
-      else if (week.length === 1) weekSentence = t(within ? 'weekOneWithin' : 'weekOneOver');
-      else weekSentence = t('weekSome', within, week.length);
-
       return `<section class="screen">
           <h1 class="xl" tabindex="-1">${t('progressTitle')}</h1>
           ${noticeHtml()}
+          ${calendarCard(foods, weights)}
           <div class="card">
             <div class="eyebrow">${t('yourWeight')}</div>
             <p class="big-sentence">${wSentence}</p>
             <p class="muted">${wDetail}</p>
             ${bmiLine}
             ${lastWeighIns.length ? `<ul class="kv">${lastWeighIns.map((w) => `<li><span>${dayLabel(w.date)}</span><span>${w.kg.toFixed(1)} kg</span></li>`).join('')}</ul>` : ''}
-          </div>
-          <div class="card">
-            <div class="eyebrow">${t('yourDays')}</div>
-            <p class="big-sentence">${weekSentence}</p>
-            <p class="muted small">${t('tapDay')}</p>
-            ${days.map((d) => {
-              const has = d.kcal !== undefined;
-              const pct = has ? Math.max(2, (d.kcal / maxV) * 100) : 0;
-              return `<button type="button" class="day-bar" data-act="open-day" data-date="${d.date}"
-                  aria-label="${esc(t('dayAria', dayLabel(d.date), has ? fmt(d.kcal) : null))}">
-                  <span class="day-bar-label">${dayLabel(d.date)}</span>
-                  <span class="track">
-                    <span class="fill${has && d.kcal > state.goal ? ' over' : ''}" style="width:${pct}%"></span>
-                    <span class="goal-mark" style="left:${goalPct}%"></span>
-                  </span>
-                  <span class="day-bar-value">${has ? fmt(d.kcal) : '—'}</span>
-                </button>`;
-            }).join('')}
-            <div class="legend">
-              <span><i class="swatch"></i>${t('legendWithin')}</span>
-              <span><i class="swatch over"></i>${t('legendOver')}</span>
-              <span><i class="swatch goal"></i>${t('legendGoal', fmt(state.goal))}</span>
-            </div>
-            ${state.daysShown < 90 ? `<button type="button" class="btn-text" data-act="more-days">${t('moreDays')}</button>` : ''}
           </div>
         </section>`;
     },
@@ -1279,7 +1325,12 @@
     },
 
     // Progress / More
-    'more-days': () => { state.daysShown += 7; return render(); },
+    'cal-month': (el) => {
+      const [y, m] = state.calMonth.split('-').map(Number);
+      state.calMonth = toKey(new Date(y, m - 1 + Number(el.dataset.delta), 1)).slice(0, 7);
+      return render();
+    },
+    'cal-mode': (el) => { state.calMode = el.dataset.mode; return render(); },
     'toggle-advanced': () => { state.advanced = !state.advanced; return render(); },
     'export-json': () => exportBackup(),
     'export-csv': () => exportCSV(),
