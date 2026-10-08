@@ -34,45 +34,51 @@
   --shadow: 0 1px 2px rgba(90, 20, 50, .05), 0 10px 30px rgba(90, 20, 50, .07);
   --shadow-sm: 0 1px 2px rgba(90, 20, 50, .06), 0 6px 16px rgba(90, 20, 50, .08);
   --shadow-accent: 0 10px 24px rgba(216, 27, 96, .30);
-  color-scheme: light dark;
+  --bg-clear: rgba(251, 243, 246, 0); /* --bg, see-through: for fades over content */
+  --blob-opacity: .9;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #140e11;
-    --card: #221920;
-    --ink: #f7edf1;
-    --muted: #bda7b2;
-    --faint: #7e6873;
-    --line: #34262e;
-    --fill: #2d2128;
-    --accent: #f27aae;
-    --accent-strong: #ff9cc5;
-    --on-accent: #2b0616;
-    --accent-soft: #4a1d31;
-    --accent-soft-ink: #ffd5e6;
-    --ring-start: #ffa3c9;
-    --ring-end: #e2427f;
-    --ring-track: #3a2731;
-    --warn: #f3b65a;
-    --warn-soft: #3b2a12;
-    --warn-ink: #fbe0b3;
-    --over: #e0a03c;
-    --danger: #ff8a80;
-    --danger-soft: #3d1a17;
-    --danger-ink: #ffd3ce;
-    --ios-blue: #6ea8ff;
+/* Dark colours. The page is marked data-theme="dark" by the script in index.html
+   (and by app.js when the setting changes): either chosen under More → Appearance,
+   or "Automatic" while the iPhone is in Dark Mode. */
+:root[data-theme="dark"] {
+  --bg: #140e11;
+  --card: #221920;
+  --ink: #f7edf1;
+  --muted: #bda7b2;
+  --faint: #7e6873;
+  --line: #34262e;
+  --fill: #2d2128;
+  --accent: #f27aae;
+  --accent-strong: #ff9cc5;
+  --on-accent: #2b0616;
+  --accent-soft: #4a1d31;
+  --accent-soft-ink: #ffd5e6;
+  --ring-start: #ffa3c9;
+  --ring-end: #e2427f;
+  --ring-track: #3a2731;
+  --warn: #f3b65a;
+  --warn-soft: #3b2a12;
+  --warn-ink: #fbe0b3;
+  --over: #e0a03c;
+  --danger: #ff8a80;
+  --danger-soft: #3d1a17;
+  --danger-ink: #ffd3ce;
+  --ios-blue: #6ea8ff;
 
-    --peach-bg: #3d2619; --peach: #ffb98a;
-    --pink-bg: #43192b; --pink: #ff8ab8;
-    --lavender-bg: #29224a; --lavender: #b9aaff;
-    --mint-bg: #16362a; --mint: #7fd9ae;
-    --amber-bg: #3b2a12; --amber: #f3b65a;
+  --peach-bg: #3d2619; --peach: #ffb98a;
+  --pink-bg: #43192b; --pink: #ff8ab8;
+  --lavender-bg: #29224a; --lavender: #b9aaff;
+  --mint-bg: #16362a; --mint: #7fd9ae;
+  --amber-bg: #3b2a12; --amber: #f3b65a;
 
-    --shadow: 0 1px 0 rgba(255, 255, 255, .03), 0 10px 28px rgba(0, 0, 0, .35);
-    --shadow-sm: 0 1px 0 rgba(255, 255, 255, .03), 0 6px 16px rgba(0, 0, 0, .3);
-    --shadow-accent: 0 10px 24px rgba(242, 122, 174, .22);
-  }
+  --shadow: 0 1px 0 rgba(255, 255, 255, .03), 0 10px 28px rgba(0, 0, 0, .35);
+  --shadow-sm: 0 1px 0 rgba(255, 255, 255, .03), 0 6px 16px rgba(0, 0, 0, .3);
+  --shadow-accent: 0 10px 24px rgba(242, 122, 174, .22);
+  --bg-clear: rgba(20, 14, 17, 0);
+  --blob-opacity: .55;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -362,7 +368,7 @@ button:disabled { opacity: .45; cursor: default; }
   position: relative; height: 270px; margin: -6px -24px 0;
   overflow-x: hidden; overflow-x: clip; /* soft shapes must not make the page scroll sideways */
 }
-.blob { position: absolute; border-radius: 50%; filter: blur(34px); opacity: .9; }
+.blob { position: absolute; border-radius: 50%; filter: blur(34px); opacity: var(--blob-opacity); }
 .blob.b1 { width: 230px; height: 230px; background: var(--pink-bg); left: calc(50% - 175px); top: 4px; }
 .blob.b2 { width: 200px; height: 200px; background: var(--peach-bg); left: calc(50% + 5px); top: 70px; }
 .blob.b3 { width: 170px; height: 170px; background: var(--lavender-bg); left: calc(50% - 80px); top: 120px; opacity: .7; }
@@ -419,16 +425,13 @@ button:disabled { opacity: .45; cursor: default; }
 .welcome-cta {
   position: sticky; bottom: 0; margin: auto -24px 0;
   padding: 18px 24px calc(14px + env(safe-area-inset-bottom));
-  background: linear-gradient(rgba(251, 243, 246, 0), var(--bg) 30%);
+  background: linear-gradient(var(--bg-clear), var(--bg) 30%);
   display: flex; flex-direction: column; gap: 6px;
   animation: rise .6s ease-out .4s both;
 }
 .welcome-cta .btn-primary .ic { width: 22px; height: 22px; stroke-width: 2.8; }
 .welcome-note { text-align: center; font-size: 14px; font-weight: 700; color: var(--muted); }
-@media (prefers-color-scheme: dark) {
-  .welcome-cta { background: linear-gradient(rgba(20, 14, 17, 0), var(--bg) 30%); }
-  .blob { opacity: .55; }
-}
+
 /* Shorter phones (e.g. iPhone SE): a smaller picture so the button stays in view. */
 @media (max-height: 720px) {
   .hero-art { height: 230px; }
@@ -572,10 +575,7 @@ button:disabled { opacity: .45; cursor: default; }
 .sticky-foot {
   position: sticky; bottom: 0; z-index: 2;
   margin: 0 -20px -24px; padding: 28px 20px calc(20px + env(safe-area-inset-bottom));
-  background: linear-gradient(rgba(251, 243, 246, 0), var(--bg) 40%);
-}
-@media (prefers-color-scheme: dark) {
-  .sticky-foot { background: linear-gradient(rgba(20, 14, 17, 0), var(--bg) 40%); }
+  background: linear-gradient(var(--bg-clear), var(--bg) 40%);
 }
 
 .food-name {

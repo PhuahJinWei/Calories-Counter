@@ -5,8 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>食事日記</title>
   <meta name="description" content="かんたんな食事と体重の日記。記録はあなたのスマホの中だけに保存されます。">
-  <meta name="theme-color" content="#fbf3f6" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#140e11" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbf3f6">
+  <script>
+    // Light or dark, decided before anything is drawn so the screen never flashes the wrong colours.
+    // The choice (More → Appearance) is kept in localStorage for this; app.js keeps it in step.
+    (function () {
+      var pref = 'auto';
+      try { pref = localStorage.getItem('theme') || 'auto'; } catch (e) { /* storage blocked: follow the phone */ }
+      var dark = pref === 'dark' || (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.querySelector('meta[name="theme-color"]').setAttribute('content', dark ? '#140e11' : '#fbf3f6');
+    })();
+  </script>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="食事日記">

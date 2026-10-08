@@ -6,6 +6,9 @@ All data is stored **on your iPhone** (IndexedDB inside the Home Screen app). No
 **Language:** the app opens in Japanese on a Japanese iPhone and in English otherwise.
 It can be switched at any time under その他 → 言語 / Language (More → Language).
 
+**Light and dark:** the app follows the iPhone's Light/Dark setting by default. It can be fixed to
+light or dark under その他 → 表示モード (More → Appearance). The choice is included in backups.
+
 **Suggested daily goal:** during setup the app asks gender, age, height, weight and activity level.
 
 - Resting calories (BMR): 国立健康・栄養研究所の式 (Ganpule et al. 2007, built from Japanese adults).

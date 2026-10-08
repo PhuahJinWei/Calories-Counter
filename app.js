@@ -73,8 +73,28 @@
     calMonth: todayKey().slice(0, 7), // 'YYYY-MM' shown in the progress calendar
     calMode: 'kcal', // 'kcal' | 'weight'
     advanced: false,
+    theme: 'auto', // 'auto' (follow the iPhone) | 'light' | 'dark'
   };
   let lastSeenToday = state.date;
+
+  // ---------- Light / dark ----------
+  // The setting is saved in the database (so it is in backups) and copied to
+  // localStorage, which the small script in index.html reads before the page is drawn.
+  const THEMES = ['auto', 'light', 'dark'];
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+
+  function applyTheme(pref) {
+    state.theme = THEMES.includes(pref) ? pref : 'auto';
+    const dark = state.theme === 'dark' || (state.theme === 'auto' && darkQuery.matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    // The bar at the top of the screen takes the background colour.
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (bg) document.querySelector('meta[name="theme-color"]').setAttribute('content', bg);
+    try { localStorage.setItem('theme', state.theme); } catch (_) { /* storage blocked: still works for this visit */ }
+  }
+
+  // "Automatic" follows the iPhone even if it switches while the app is open.
+  darkQuery.addEventListener('change', () => { if (state.theme === 'auto') applyTheme('auto'); });
 
   // ---------- Dates: always local time (YYYY-MM-DD), never UTC ----------
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -234,6 +254,7 @@
     phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/>',
     share: '<path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-1"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/>',
+    contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -255,6 +276,11 @@
     alcohol: { tile: 't-amber', icon: 'glass' },
   };
   const groupStyle = (g) => GROUP_STYLE[g] || { tile: 't-pink', icon: 'bowl' };
+  const THEME_STYLE = {
+    auto: { tile: 't-pink', icon: 'contrast' },
+    light: { tile: 't-peach', icon: 'sun' },
+    dark: { tile: 't-lavender', icon: 'moon' },
+  };
   // The user's own foods get a coloured tile with their first letter.
   const PALETTE = ['t-pink', 't-peach', 't-lavender', 't-mint'];
   const initialTile = (name) => {
@@ -845,6 +871,7 @@
             ${listRow('data-act="open-goal"', 't-pink', 'target', t('changeGoal'), t('goalNow', fmt(state.goal)))}
             ${listRow('data-act="go" data-to="backup"', 't-amber', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
             ${listRow('data-act="go" data-to="help"', 't-lavender', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
+            ${listRow('data-act="go" data-to="appearance"', 't-peach', 'contrast', t('appearance'), t(`theme_${state.theme}_title`))}
             ${listRow(`data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}"`, 't-mint', 'globe', t('language'), `${t('langName')} → ${t('otherLangName')}`)}
           </div>
           <button type="button" class="btn-text" data-act="toggle-advanced">${state.advanced ? t('hideExtra') : t('showExtra')}</button>
@@ -873,6 +900,21 @@
           <div class="card">
             <div class="box-title">${t('backupRestoreTitle')}</div>
             <p class="muted">${t('backupRestoreText')}</p>
+          </div>
+        </section>`;
+    },
+
+    async appearance() {
+      return `${topbar('more')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('appearance')}</h1>
+          <p class="muted">${t('appearanceSub')}</p>
+          <div class="stack">
+            ${THEMES.map((k) => `<button type="button" class="choice${state.theme === k ? ' on' : ''}" data-act="pick-theme" data-choice="${k}" aria-pressed="${state.theme === k}">
+                <span class="tile ${THEME_STYLE[k].tile}">${icon(THEME_STYLE[k].icon)}</span>
+                <span class="choice-text"><b>${t(`theme_${k}_title`)}</b><span class="choice-sub">${t(`theme_${k}_sub`)}</span></span>
+                ${state.theme === k ? icon('check', 'accent') : ''}
+              </button>`).join('')}
           </div>
         </section>`;
     },
@@ -1115,6 +1157,8 @@
     if (goalType && GOAL_TYPES[goalType.value]) settings.push({ key: 'goalType', value: goalType.value });
     const lang = find('lang');
     if (lang && (lang.value === 'ja' || lang.value === 'en')) settings.push({ key: 'lang', value: lang.value });
+    const theme = find('theme');
+    if (theme && THEMES.includes(theme.value)) settings.push({ key: 'theme', value: theme.value });
     const sex = find('sex');
     if (sex && SEXES.includes(sex.value)) settings.push({ key: 'sex', value: sex.value });
     const birthYear = find('birthYear');
@@ -1154,6 +1198,7 @@
     state.goalType = await DB.getSetting('goalType', 'keep');
     await loadProfile();
     I18N.setLang(await DB.getSetting('lang', I18N.lang));
+    applyTheme(await DB.getSetting('theme', state.theme));
     state.date = todayKey();
     await go('today', { notice: { text: t('restored') } });
   }
@@ -1369,6 +1414,12 @@
     },
     'cal-mode': (el) => { state.calMode = el.dataset.mode; return render(); },
     'toggle-advanced': () => { state.advanced = !state.advanced; return render(); },
+    // Changes straight away, so the person sees the new look while choosing.
+    'pick-theme': async (el) => {
+      applyTheme(el.dataset.choice);
+      await DB.setSetting('theme', state.theme);
+      await render();
+    },
     'export-json': () => exportBackup(),
     'export-csv': () => exportCSV(),
     import: () => $('#import-file').click(),
@@ -1442,15 +1493,20 @@
     I18N.setLang(I18N.defaultLang);
     try {
       await DB.open();
-      const [savedGoal, goalType, onboarded, lang, foodCount, weightCount] = await Promise.all([
+      const [savedGoal, goalType, onboarded, lang, theme, foodCount, weightCount] = await Promise.all([
         DB.getSetting('goal', null),
         DB.getSetting('goalType', 'keep'),
         DB.getSetting('onboarded', false),
         DB.getSetting('lang', null),
+        DB.getSetting('theme', null),
         DB.count('foods'),
         DB.count('weights'),
       ]);
       if (lang) I18N.setLang(lang);
+      // The database is the source of truth; with nothing saved, keep what index.html used.
+      let quick = null;
+      try { quick = localStorage.getItem('theme'); } catch (_) { /* storage blocked */ }
+      applyTheme(theme ?? quick);
       state.goal = savedGoal ?? DEFAULT_GOAL;
       state.goalType = GOAL_TYPES[goalType] ? goalType : 'keep';
       await loadProfile();
