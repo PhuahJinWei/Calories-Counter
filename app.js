@@ -66,6 +66,7 @@
     meal: defaultMeal(),
     food: null, // built-in food picked for the portion step
     query: '',
+    group: 'all', // food type chip on the food screen
     mine: [], // the user's own past foods, most used first
     customName: '',
     notice: null, // { text, kind?, undo? }
@@ -213,8 +214,20 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-    scale: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8.5 10a4.5 4.5 0 0 1 7 0L12 13"/>',
+    scale: '<rect x="3.5" y="3.5" width="17" height="17" rx="5"/><path d="M7.5 10a6 6 0 0 1 9 0"/><path d="M12 13.5l2-3"/>',
     bowl: '<path d="M3 12h18a9 8 0 0 1-18 0z"/><path d="M8 8c0-1.5 1-2 1-3.5M12 8c0-1.5 1-2 1-3.5M16 8c0-1.5 1-2 1-3.5"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+    apple: '<path d="M12 7c-1.5-1.2-5-1.6-6.5 1.2C4 11 5.2 16.5 8 19c1.4 1.2 2.6.8 4 .2 1.4.6 2.6 1 4-.2 2.8-2.5 4-8 2.5-10.8C17 5.4 13.5 5.8 12 7z"/><path d="M12 7c0-2 1-3.5 2.5-4"/>',
+    noodles: '<path d="M3 12h18a9 8 0 0 1-18 0z"/><path d="M14 3l-4 9M19 4l-6 8"/>',
+    donburi: '<path d="M3 12h18a9 8 0 0 1-18 0z"/><path d="M7 9.5c2-1.5 8-1.5 10 0"/>',
+    leaf: '<path d="M5 19c0-8 5-14 15-14 0 10-6 15-14 15"/><path d="M5 19l7-7"/>',
+    onigiri: '<path d="M12 3.5c-2 0-8.5 11-8.5 14 0 2 1.5 3 3.5 3h10c2 0 3.5-1 3.5-3 0-3-6.5-14-8.5-14z"/><path d="M8.5 15h7v5.5h-7z"/>',
+    cookie: '<circle cx="12" cy="12" r="8.5"/><path d="M9 9h.01M14.5 8.5h.01M15 14h.01M10 15h.01M12 12h.01"/>',
+    cup: '<path d="M5 8h11v6a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 9.5h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3.5c0 1 1 1.5 1 2.5M12 3.5c0 1 1 1.5 1 2.5"/>',
+    glass: '<path d="M7 3h10l-1 8a4 4 0 0 1-8 0z"/><path d="M12 15v6M8.5 21h7"/>',
     target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/>',
     shield: '<path d="M12 3l7.5 3v6c0 4.5-3.2 7.6-7.5 9-4.3-1.4-7.5-4.5-7.5-9V6z"/>',
     phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/>',
@@ -222,6 +235,39 @@
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+
+  // Each meal and food type has its own soft colour and icon.
+  const MEAL_STYLE = {
+    Breakfast: { tile: 't-peach', icon: 'sun' },
+    Lunch: { tile: 't-pink', icon: 'bowl' },
+    Dinner: { tile: 't-lavender', icon: 'moon' },
+    Snack: { tile: 't-mint', icon: 'apple' },
+  };
+  const GROUP_STYLE = {
+    staple: { tile: 't-peach', icon: 'noodles' },
+    dish: { tile: 't-pink', icon: 'donburi' },
+    side: { tile: 't-mint', icon: 'leaf' },
+    konbini: { tile: 't-lavender', icon: 'onigiri' },
+    fruit: { tile: 't-mint', icon: 'apple' },
+    sweet: { tile: 't-peach', icon: 'cookie' },
+    drink: { tile: 't-lavender', icon: 'cup' },
+    alcohol: { tile: 't-amber', icon: 'glass' },
+  };
+  const groupStyle = (g) => GROUP_STYLE[g] || { tile: 't-pink', icon: 'bowl' };
+  // The user's own foods get a coloured tile with their first letter.
+  const PALETTE = ['t-pink', 't-peach', 't-lavender', 't-mint'];
+  const initialTile = (name) => {
+    const chars = [...name.trim()];
+    const hash = chars.reduce((h, c) => h + c.codePointAt(0), 0);
+    return `<span class="tile ${PALETTE[hash % PALETTE.length]}">${esc((chars[0] || '?').toUpperCase())}</span>`;
+  };
+
+  // One row in a grouped card: coloured icon tile, title, subtitle, chevron.
+  const listRow = (attrs, tile, iconName, title, sub) => `<button type="button" class="list-row" ${attrs}>
+      <span class="tile ${tile}">${icon(iconName)}</span>
+      <span class="list-main"><span class="list-title">${title}</span><span class="list-sub">${sub}</span></span>
+      ${icon('next')}
+    </button>`;
 
   const topbar = (back, step = '') => `<div class="topbar">
       <button type="button" class="btn-back" data-act="go" data-to="${back}">${icon('back')}${t('back')}</button>
@@ -258,12 +304,6 @@
       <p class="field-error" id="${id}-error" hidden></p>`;
   }
 
-  const navRow = (act, iconName, title, sub) => `<button type="button" class="choice" data-act="go" data-to="${act}">
-      ${icon(iconName, 'lead-icon')}
-      <span class="choice-text"><b>${title}</b><span class="choice-sub">${sub}</span></span>
-      ${icon('next')}
-    </button>`;
-
   // ---------- Screens ----------
   const SCREENS = {
     async welcome() {
@@ -272,7 +312,7 @@
           <h1 class="xl" tabindex="-1">${t('welcomeTitle')}</h1>
           <p class="lead muted">${t('welcomeLead')}</p>
           <button type="button" class="btn-primary" data-act="go" data-to="about">${t('welcomeStart')}</button>
-          <button type="button" class="btn-text" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">${icon('globe')}${t('otherLangName')}</button>
+          <button type="button" class="btn-text center" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">${icon('globe')}${t('otherLangName')}</button>
         </section>`;
     },
 
@@ -381,8 +421,12 @@
 
     async today() {
       const date = state.date;
-      const isToday = date === todayKey();
-      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount, goalWeight] = await Promise.all([
+      const today = todayKey();
+      const isToday = date === today;
+      // The week (Monday to Sunday) that contains the day being shown.
+      const weekStart = addDays(date, -((fromKey(date).getDay() + 6) % 7));
+      const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount, goalWeight, weekFoods] = await Promise.all([
         DB.getFoodsByDate(date),
         DB.getWeight(date),
         DB.getWeightBefore(date),
@@ -390,6 +434,7 @@
         DB.count('foods'),
         DB.count('weights'),
         DB.getSetting('goalWeight', null),
+        Promise.all(weekDates.map((d) => (d <= today ? DB.getFoodsByDate(d) : []))),
       ]);
 
       // Offer to review the goal once weight has moved a few kg from when it was set.
@@ -400,7 +445,6 @@
       const total = foods.reduce((s, f) => s + f.kcal, 0);
       const left = state.goal - total;
       const over = left < 0;
-      const pct = Math.min(100, (total / state.goal) * 100);
 
       const backupAge = lastBackup ? (Date.now() - new Date(lastBackup).getTime()) / DAY_MS : Infinity;
       const needsBackup = foodCount + weightCount > 0 && backupAge > BACKUP_REMINDER_DAYS;
@@ -409,120 +453,136 @@
       if (weight) weightSub = t(isToday ? 'weightSubToday' : 'weightSubPast', weight.kg.toFixed(1));
       else if (lastWeight) weightSub = t('weightSubLast', lastWeight.kg.toFixed(1), shortDate(lastWeight.date));
       else weightSub = t('weightSubNone');
+      const shownKg = (weight || lastWeight || {}).kg;
 
-      let summaryLabel;
-      let summaryUnit;
-      if (over) {
-        summaryLabel = t('summaryOver');
-        summaryUnit = t(isToday ? 'summaryUnitOverToday' : 'summaryUnitOverPast');
-      } else {
-        summaryLabel = t(isToday ? 'summaryLeftToday' : 'summaryLeftPast');
-        summaryUnit = t(isToday ? 'summaryUnitLeftToday' : 'summaryUnitLeftPast');
-      }
+      // Week strip: each day shows a small ring of how much of the goal was eaten.
+      const week = weekDates.map((d, i) => {
+        const kcal = weekFoods[i].reduce((s, f) => s + f.kcal, 0);
+        const has = weekFoods[i].length > 0;
+        const pct = Math.min(100, (kcal / state.goal) * 100);
+        const ring = !has ? 'var(--ring-track)'
+          : kcal > state.goal ? 'var(--over)'
+          : `conic-gradient(var(--accent) 0 ${pct.toFixed(1)}%, var(--ring-track) 0)`;
+        const cls = `week-day${d === today ? ' is-today' : ''}${d === date ? ' is-selected' : ''}`;
+        return `<button type="button" class="${cls}" data-act="open-day" data-date="${d}" ${d > today ? 'disabled' : ''}
+            aria-pressed="${d === date}" aria-label="${esc(t('dayAria', longDate(d), has ? fmt(kcal) : null))}">
+            <span class="week-letter">${fromKey(d).toLocaleDateString(I18N.locale, { weekday: 'narrow' })}</span>
+            <span class="week-ring" style="background:${ring}"><span class="week-num">${fromKey(d).getDate()}</span></span>
+          </button>`;
+      }).join('');
+
+      // Ring: how much of today's goal has been eaten.
+      const R = 84;
+      const C = 2 * Math.PI * R;
+      const filled = over ? C : (total / state.goal) * C;
+      const ringLabel = over ? t('ringOver') : t(isToday ? 'ringLeftToday' : 'ringLeftPast');
 
       const meals = MEALS.map((meal) => {
         const items = foods.filter((f) => f.meal === meal);
         const sub = items.reduce((s, f) => s + f.kcal, 0);
-        return `<div class="card meal-card">
-            <div class="meal-head"><span class="meal-name">${mealName(meal)}</span><span class="muted small">${items.length ? t('kcal', fmt(sub)) : ''}</span></div>
-            ${items.length === 0 ? `<div class="muted">${t('nothingYet')}</div>` : items.map((f) => `<div class="item">
-                <div class="item-main">
-                  <div class="item-name">${esc(f.name)}</div>
-                  <div class="muted small">${t('kcal', fmt(f.kcal))} · ${esc(portionText(f.portion) || timeOf(f.createdAt))}</div>
+        const st = MEAL_STYLE[meal];
+        return `<div class="meal-block">
+            <div class="list-row">
+              <span class="tile ${st.tile}">${icon(st.icon)}</span>
+              <span class="list-main">
+                <span class="list-title">${mealName(meal)}</span>
+                <span class="list-sub">${items.length ? t('mealSummary', items.length, fmt(sub)) : t('nothingYet')}</span>
+              </span>
+              <button type="button" class="mini-add" data-act="start-add" data-meal="${meal}" aria-label="${esc(t('addToMeal', mealName(meal)))}">${icon('plus')}</button>
+            </div>
+            ${items.length ? `<div class="meal-items">${items.map((f) => `<div class="food-item">
+                <div class="food-item-main">
+                  <div class="food-item-name">${esc(f.name)}</div>
+                  <div class="food-item-sub">${t('kcal', fmt(f.kcal))} · ${esc(portionText(f.portion) || timeOf(f.createdAt))}</div>
                 </div>
                 <button type="button" class="btn-small" data-act="remove" data-id="${f.id}" aria-label="${esc(t('removeAria', f.name))}">${t('remove')}</button>
-              </div>`).join('')}
+              </div>`).join('')}</div>` : ''}
           </div>`;
       }).join('');
 
+      const reminders = [];
+      if (!isStandalone()) reminders.push(listRow('data-act="go" data-to="help"', 't-lavender', 'phone', t('installTitle'), t('installText')));
+      if (needsReview) {
+        reminders.push(listRow('data-act="review-goal"', 't-pink', 'target', t('reviewTitle'),
+          t('reviewText', `${kgChange > 0 ? '+' : '−'}${Math.abs(kgChange).toFixed(1)}`)));
+      }
+      if (needsBackup) {
+        reminders.push(listRow('data-act="go" data-to="backup"', 't-amber', 'shield', t('backupTitle'),
+          lastBackup ? t('backupLast', ago(lastBackup)) : t('backupNone')));
+      }
+
       return `<section class="screen">
-          ${isToday ? '' : `<div class="warnbox">
-            <div class="box-title">${t('pastDayTitle')}</div>
-            <div class="day-arrows">
-              <button type="button" class="btn-small" data-act="day" data-delta="-1">${icon('back')}${t('dayBefore')}</button>
-              <button type="button" class="btn-small" data-act="day" data-delta="1">${t('dayAfter')}${icon('next')}</button>
-            </div>
-            <button type="button" class="btn-primary" data-act="tab" data-to="today">${t('backToToday')}</button>
+          ${isToday ? '' : `<div class="warnbox past-day">
+            <span class="box-title">${t('pastDayTitle')}</span>
+            <button type="button" class="btn-small" data-act="tab" data-to="today">${t('backToToday')}</button>
           </div>`}
 
-          <div class="day-head">
+          <div class="page-head">
             <div>
+              <div class="date-sub">${longDate(date)}</div>
               <h1 class="xl" tabindex="-1">${dayTitle(date)}</h1>
-              <div class="muted">${longDate(date)}</div>
             </div>
-            ${isToday ? `<button type="button" class="btn-text" data-act="day" data-delta="-1">${t('seeYesterday')}</button>` : ''}
+            <div class="icon-btn">${icon('calendar')}<input type="date" id="day-picker" value="${date}" max="${today}" aria-label="${t('pickDay')}"></div>
           </div>
+
+          <div class="week" role="group" aria-label="${t('weekAria')}">${week}</div>
 
           ${noticeHtml()}
 
-          <div class="card summary">
-            <div class="summary-label">${summaryLabel}</div>
-            <div class="summary-number${over ? ' over' : ''}">${fmt(Math.abs(left))}</div>
-            <div>${summaryUnit}</div>
-            <div class="bar"><div class="bar-fill${over ? ' over' : ''}" style="width:${pct}%"></div></div>
-            <div class="muted small">${t(isToday ? 'eatenToday' : 'eatenPast', fmt(total), fmt(state.goal))}</div>
+          <div class="card hero">
+            <div class="ring-wrap">
+              <svg width="184" height="184" viewBox="0 0 184 184" aria-hidden="true">
+                <defs><linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1"><stop class="ring-grad-a" offset="0"/><stop class="ring-grad-b" offset="1"/></linearGradient></defs>
+                <circle class="ring-track" cx="92" cy="92" r="${R}"/>
+                ${total > 0 ? `<circle class="ring-fill${over ? ' over' : ''}" cx="92" cy="92" r="${R}" transform="rotate(-90 92 92)" stroke-dasharray="${filled.toFixed(1)} ${C.toFixed(1)}"/>` : ''}
+              </svg>
+              <div class="ring-center">
+                <div class="ring-num${over ? ' over' : ''}">${fmt(Math.abs(left))}</div>
+                <div class="ring-label">${ringLabel}</div>
+              </div>
+            </div>
+            ${over && isToday ? `<p class="over-note">${t('overNoteToday')}</p>` : ''}
+            <div class="stats">
+              <div class="stat"><div class="stat-v">${fmt(total)}</div><div class="stat-l">${t('statEaten')}</div></div>
+              <div class="stat"><div class="stat-v">${fmt(state.goal)}</div><div class="stat-l">${t('statGoal')}</div></div>
+              <div class="stat"><div class="stat-v">${shownKg ? `${shownKg.toFixed(1)}<small> kg</small>` : '—'}</div><div class="stat-l">${t('statWeight')}</div></div>
+            </div>
           </div>
 
-          <div class="stack">
-            <button type="button" class="btn-primary btn-xl" data-act="start-add">${icon('plus')}${t(isToday ? 'addToday' : 'addPast')}</button>
-            <button type="button" class="btn-secondary" data-act="go" data-to="weigh">
-              ${icon('scale')}
-              <span class="choice-text"><span class="d-block">${t(isToday ? 'weighToday' : 'weighPast')}</span><span class="choice-sub">${weightSub}</span></span>
-            </button>
+          <button type="button" class="btn-primary" data-act="start-add"><span class="plus-dot">${icon('plus')}</span>${t(isToday ? 'addToday' : 'addPast')}</button>
+
+          <div class="card list">${listRow('data-act="go" data-to="weigh"', 't-lavender', 'scale', t(isToday ? 'weighToday' : 'weighPast'), weightSub)}</div>
+
+          <div class="section-head">
+            <h2>${t(isToday ? 'ateToday' : 'atePast')}</h2>
+            ${total ? `<span class="muted small">${t('kcal', fmt(total))}</span>` : ''}
           </div>
+          <div class="card list">${meals}</div>
 
-          ${isStandalone() ? '' : `<div class="warnbox">
-            <div class="box-title">${t('installTitle')}</div>
-            <div>${t('installText')}</div>
-            <button type="button" class="btn-small" data-act="go" data-to="help">${t('showHow')}</button>
-          </div>`}
-
-          ${needsReview ? `<div class="warnbox">
-            <div class="box-title">${t('reviewTitle')}</div>
-            <div>${t('reviewText', `${kgChange > 0 ? '+' : '−'}${Math.abs(kgChange).toFixed(1)}`)}</div>
-            <button type="button" class="btn-small" data-act="review-goal">${t('reviewButton')}</button>
-          </div>` : ''}
-
-          ${needsBackup ? `<div class="warnbox">
-            <div class="box-title">${t('backupTitle')}</div>
-            <div>${lastBackup ? t('backupLast', ago(lastBackup)) : t('backupNone')}</div>
-            <button type="button" class="btn-small" data-act="go" data-to="backup">${t('showHow')}</button>
-          </div>` : ''}
-
-          <h2>${t(isToday ? 'ateToday' : 'atePast')}</h2>
-          ${meals}
+          ${reminders.length ? `<div class="card list">${reminders.join('')}</div>` : ''}
         </section>`;
     },
 
     async food() {
       state.mine = summarizeFoods(await DB.getAllFoods());
       const isToday = state.date === todayKey();
-      return `${topbar('today', t('step', 1, 2))}
+      const groups = ['all', ...FOOD_GROUPS];
+      return `${topbar('today')}
         <section class="screen">
           <h1 tabindex="-1">${t('foodTitle')}</h1>
-          <div class="card row-card">
-            <span>${t('addingTo')} <b>${mealName(state.meal)}</b>${isToday ? '' : t('addingToDate', shortDate(state.date))}</span>
-            <button type="button" class="btn-text" data-act="go" data-to="meal">${t('change')}</button>
+          ${isToday ? '' : `<p class="for-date">${t('forDate', shortDate(state.date))}</p>`}
+          <div class="seg" role="group" aria-label="${t('mealPickerAria')}">
+            ${MEALS.map((m) => `<button type="button" data-act="pick-meal" data-meal="${m}" class="${m === state.meal ? 'on' : ''}" aria-pressed="${m === state.meal}">${mealName(m)}</button>`).join('')}
           </div>
-          <div class="field">
-            <label class="label" for="food-search">${t('searchLabel')}</label>
-            <input id="food-search" class="input" type="search" placeholder="${t('searchPlaceholder')}" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
+          <label class="search">${icon('search')}
+            <input id="food-search" type="search" placeholder="${t('searchPlaceholder')}" aria-label="${t('searchLabel')}" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
+          </label>
+          <div class="chips" role="group" aria-label="${t('categoriesAria')}">
+            ${groups.map((g) => `<button type="button" class="chip${state.group === g ? ' on' : ''}" data-act="pick-group" data-group="${g}" aria-pressed="${state.group === g}">${g === 'all' ? t('allFoods') : esc(groupName(g))}</button>`).join('')}
           </div>
           <div id="food-results">${foodResults()}</div>
-          <button type="button" class="btn-secondary center" data-act="start-custom">${t('cantFind')}</button>
-        </section>`;
-    },
-
-    async meal() {
-      const suggested = defaultMeal();
-      return `${topbar('food')}
-        <section class="screen">
-          <h1 tabindex="-1">${t('mealTitle')}</h1>
-          <div class="stack">
-            ${MEALS.map((m) => `<button type="button" class="choice${m === state.meal ? ' on' : ''}" data-act="pick-meal" data-meal="${m}">
-                <span class="choice-text"><b>${mealName(m)}</b>${m === suggested ? `<span class="choice-sub">${t('mealSuggested')}</span>` : ''}</span>
-                ${m === state.meal ? icon('check', 'accent') : ''}
-              </button>`).join('')}
+          <div class="sticky-foot">
+            <button type="button" class="btn-secondary center" data-act="start-custom">${t('cantFind')}</button>
           </div>
         </section>`;
     },
@@ -698,19 +758,11 @@
       return `<section class="screen">
           <h1 class="xl" tabindex="-1">${t('moreTitle')}</h1>
           ${noticeHtml()}
-          <div class="stack">
-            <button type="button" class="choice" data-act="open-goal">
-              ${icon('target', 'lead-icon')}
-              <span class="choice-text"><b>${t('changeGoal')}</b><span class="choice-sub">${t('goalNow', fmt(state.goal))}</span></span>
-              ${icon('next')}
-            </button>
-            ${navRow('backup', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
-            ${navRow('help', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
-            <button type="button" class="choice" data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}">
-              ${icon('globe', 'lead-icon')}
-              <span class="choice-text"><b>${t('language')}</b><span class="choice-sub">${t('langName')} → ${t('otherLangName')}</span></span>
-              ${icon('next')}
-            </button>
+          <div class="card list">
+            ${listRow('data-act="open-goal"', 't-pink', 'target', t('changeGoal'), t('goalNow', fmt(state.goal)))}
+            ${listRow('data-act="go" data-to="backup"', 't-amber', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
+            ${listRow('data-act="go" data-to="help"', 't-lavender', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
+            ${listRow(`data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}"`, 't-mint', 'globe', t('language'), `${t('langName')} → ${t('otherLangName')}`)}
           </div>
           <button type="button" class="btn-text" data-act="toggle-advanced">${state.advanced ? t('hideExtra') : t('showExtra')}</button>
           ${extra}
@@ -780,28 +832,42 @@
 
   function foodResults() {
     const q = norm(state.query);
-    const mineRow = (m, i) => `<button type="button" class="choice" data-act="add-again" data-idx="${i}">
-        <span class="choice-text"><b>${esc(m.name)}</b><span class="choice-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
+    const group = state.group;
+    const inGroup = (f) => group === 'all' || f.g === group;
+    // The user's own foods add straight away (same as last time).
+    const mineTile = (m, i) => `<button type="button" class="fav" data-act="add-again" data-idx="${i}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
+        ${initialTile(m.name)}
+        <span><span class="fav-name d-block">${esc(m.name)}</span><span class="fav-sub d-block">${t('kcal', fmt(m.kcal))}</span></span>
+        <span class="fav-add" aria-hidden="true">${icon('plus')}</span>
+      </button>`;
+    const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}">
+        ${initialTile(m.name)}
+        <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
         ${icon('plus', 'accent')}
       </button>`;
-    const builtRow = (f) => `<button type="button" class="choice" data-act="pick-food" data-idx="${FOODS.indexOf(f)}">
-        <span class="choice-text"><b>${esc(foodName(f))}</b><span class="choice-sub">${t('about', fmt(f.kcal))}</span></span>
-        ${icon('next')}
-      </button>`;
+    const builtRow = (f) => {
+      const st = groupStyle(f.g);
+      return `<button type="button" class="list-row" data-act="pick-food" data-idx="${FOODS.indexOf(f)}">
+          <span class="tile ${st.tile}">${icon(st.icon)}</span>
+          <span class="list-main"><span class="list-title">${esc(foodName(f))}</span><span class="list-sub">${t('about', fmt(f.kcal))}</span></span>
+          ${icon('next')}
+        </button>`;
+    };
 
     if (!q) {
-      const usual = state.mine.slice(0, 4);
-      return (usual.length ? `<h2>${t('oftenHave')}</h2><div class="stack">${usual.map(mineRow).join('')}</div>` : '')
-        + FOOD_GROUPS.map((g) => `<h2>${esc(groupName(g))}</h2><div class="stack">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
+      const usual = group === 'all' ? state.mine.slice(0, 4) : [];
+      const shown = group === 'all' ? FOOD_GROUPS : [group];
+      return (usual.length ? `<h2>${t('oftenHave')}</h2><div class="fav-grid">${usual.map(mineTile).join('')}</div>` : '')
+        + shown.map((g) => `<h2>${esc(groupName(g))}</h2><div class="card list">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
     }
 
-    const mine = state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q));
+    const mine = group === 'all' ? state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q)) : [];
     const mineKeys = new Set(mine.map(([m]) => m.key));
-    const built = FOODS.filter((f) => f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
+    const built = FOODS.filter((f) => inGroup(f) && f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
     if (!mine.length && !built.length) {
       return `<p class="muted">${t('notFound', esc(state.query.trim()))}</p>`;
     }
-    return `<h2>${t('matches')}</h2><div class="stack">${mine.map(([m, i]) => mineRow(m, i)).join('')}${built.map(builtRow).join('')}</div>`;
+    return `<h2>${t('matches')}</h2><div class="card list">${mine.map(([m, i]) => mineRow(m, i)).join('')}${built.map(builtRow).join('')}</div>`;
   }
 
   // ---------- Rendering & navigation ----------
@@ -1151,8 +1217,25 @@
     },
 
     // Adding food
-    'start-add': () => go('food', { query: '', meal: defaultMeal() }),
-    'pick-meal': (el) => go('food', { meal: el.dataset.meal }),
+    'start-add': (el) => go('food', { query: '', group: 'all', meal: el.dataset.meal || defaultMeal() }),
+    // Meal and food-type buttons on the food screen update in place, so the search box keeps its text.
+    'pick-meal': (el) => {
+      state.meal = el.dataset.meal;
+      $$('.seg button').forEach((b) => {
+        const on = b.dataset.meal === state.meal;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on);
+      });
+    },
+    'pick-group': (el) => {
+      state.group = el.dataset.group;
+      $$('.chips .chip').forEach((b) => {
+        const on = b.dataset.group === state.group;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on);
+      });
+      $('#food-results').innerHTML = foodResults();
+    },
     'pick-food': (el) => {
       const food = FOODS[Number(el.dataset.idx)];
       // Nothing to ask about portions for tea or water.
@@ -1236,6 +1319,14 @@
     e.preventDefault();
     if (e.target.id === 'custom-name') $('#custom-kcal').focus();
     else e.target.blur();
+  });
+
+  // Calendar button on Today: the native date picker.
+  document.addEventListener('change', (e) => {
+    if (e.target.id !== 'day-picker' || !e.target.value) return;
+    const today = todayKey();
+    state.date = e.target.value > today ? today : e.target.value;
+    go('today').catch(showError);
   });
 
   $('#error-close').addEventListener('click', () => { $('#error-box').hidden = true; });
