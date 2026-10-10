@@ -571,29 +571,32 @@ button:disabled { opacity: .45; cursor: default; }
 .chip.on { background: var(--ink); color: var(--bg); }
 
 #food-results { display: flex; flex-direction: column; gap: 12px; }
-.fav-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.fav {
-  position: relative;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-  min-height: 120px; padding: 14px; border: 0; border-radius: 18px;
-  background: var(--card); color: var(--ink); box-shadow: var(--shadow);
-  text-align: left;
-}
-.fav-name { font-size: 16px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
-.fav-sub { font-size: 14px; font-weight: 500; color: var(--muted); }
-.fav-add {
-  position: absolute; top: 14px; right: 14px;
-  width: 36px; height: 36px; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent);
+/* Rows without icon tiles: the divider starts at the text */
+.list.plain > .list-row + .list-row::before { left: 16px; }
+/* Small rose circle for one-tap actions (add again, type it in) */
+.add-dot {
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent);
 }
-.fav-add .ic { width: 18px; height: 18px; stroke-width: 3; }
+.add-dot .ic { width: 17px; height: 17px; stroke-width: 2.6; }
+.list-row.typed .list-title { color: var(--accent-strong); }
 
 .sticky-foot {
   position: sticky; bottom: 0; z-index: 2;
   margin: 0 -20px -24px; padding: 28px 20px calc(20px + env(safe-area-inset-bottom));
   background: linear-gradient(var(--bg-clear), var(--bg) 40%);
 }
+
+.kcal-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.kcal-pick {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 10px 14px; border: 0; border-radius: 14px;
+  background: var(--card); color: var(--ink); text-align: left;
+}
+.kcal-pick.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.kcal-pick-name { font-size: 15px; font-weight: 600; }
+.kcal-pick-v { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .food-name {
   align-self: flex-start;

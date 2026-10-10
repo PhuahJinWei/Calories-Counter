@@ -3,7 +3,7 @@
 //
 // When you change any app file, bump CACHE_VERSION so phones pick up the update
 // (it applies the next time the app is opened after the update downloads).
-const CACHE_VERSION = 'v17';
+const CACHE_VERSION = 'v18';
 const CACHE = `calorie-tracker-${CACHE_VERSION}`;
 const ASSETS = [
   './',

@@ -47,6 +47,13 @@
   // Portions saved by the earlier English-only version.
   const LEGACY_PORTIONS = { 'a small amount': 'small', 'a normal amount': 'normal', 'a lot': 'large' };
   const FOOD_GROUPS = Object.keys(FOOD_GROUP_NAMES).filter((g) => FOODS.some((f) => f.g === g));
+  // Quick picks on the "type it in" screen, to help guess home-cooked dishes. Rough on purpose.
+  const KCAL_PICKS = [
+    { key: 'small', kcal: 100 },
+    { key: 'medium', kcal: 300 },
+    { key: 'large', kcal: 500 },
+    { key: 'meal', kcal: 700 },
+  ];
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -275,13 +282,6 @@
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     apple: '<path d="M12 7c-1.5-1.2-5-1.6-6.5 1.2C4 11 5.2 16.5 8 19c1.4 1.2 2.6.8 4 .2 1.4.6 2.6 1 4-.2 2.8-2.5 4-8 2.5-10.8C17 5.4 13.5 5.8 12 7z"/><path d="M12 7c0-2 1-3.5 2.5-4"/>',
-    noodles: '<path d="M3 12h18a9 8 0 0 1-18 0z"/><path d="M14 3l-4 9M19 4l-6 8"/>',
-    donburi: '<path d="M3 12h18a9 8 0 0 1-18 0z"/><path d="M7 9.5c2-1.5 8-1.5 10 0"/>',
-    leaf: '<path d="M5 19c0-8 5-14 15-14 0 10-6 15-14 15"/><path d="M5 19l7-7"/>',
-    onigiri: '<path d="M12 3.5c-2 0-8.5 11-8.5 14 0 2 1.5 3 3.5 3h10c2 0 3.5-1 3.5-3 0-3-6.5-14-8.5-14z"/><path d="M8.5 15h7v5.5h-7z"/>',
-    cookie: '<circle cx="12" cy="12" r="8.5"/><path d="M9 9h.01M14.5 8.5h.01M15 14h.01M10 15h.01M12 12h.01"/>',
-    cup: '<path d="M5 8h11v6a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 9.5h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3.5c0 1 1 1.5 1 2.5M12 3.5c0 1 1 1.5 1 2.5"/>',
-    glass: '<path d="M7 3h10l-1 8a4 4 0 0 1-8 0z"/><path d="M12 15v6M8.5 21h7"/>',
     target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/>',
     shield: '<path d="M12 3l7.5 3v6c0 4.5-3.2 7.6-7.5 9-4.3-1.4-7.5-4.5-7.5-9V6z"/>',
     phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/>',
@@ -290,40 +290,23 @@
     close: '<path d="M7 7l10 10M17 7L7 17"/>',
     dots: '<circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none"/>',
     download: '<path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+    pencil: '<path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19z"/><path d="M14 7l3 3"/>',
     steps: '<path d="M8 3c1.7 0 2.5 1.8 2.5 4S9.7 11.5 8 11.5 5.5 9.2 5.5 7 6.3 3 8 3z"/><path d="M6 14.5h4l-.4 2.5a1.6 1.6 0 0 1-3.2 0z"/><path d="M16 7.5c1.7 0 2.5 1.8 2.5 4S17.7 16 16 16s-2.5-2.3-2.5-4.5.8-4 2.5-4z"/><path d="M14 19h4l-.4 2a1.6 1.6 0 0 1-3.2 0z"/>',
     contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
-  // Each meal and food type has its own soft colour and icon.
+  // Each meal and theme has an icon on a neutral tile (colour is kept for things with meaning).
   const MEAL_STYLE = {
     Breakfast: { tile: 't-neutral', icon: 'sun' },
     Lunch: { tile: 't-neutral', icon: 'bowl' },
     Dinner: { tile: 't-neutral', icon: 'moon' },
     Snack: { tile: 't-neutral', icon: 'apple' },
   };
-  const GROUP_STYLE = {
-    staple: { tile: 't-neutral', icon: 'noodles' },
-    dish: { tile: 't-neutral', icon: 'donburi' },
-    side: { tile: 't-neutral', icon: 'leaf' },
-    konbini: { tile: 't-neutral', icon: 'onigiri' },
-    fruit: { tile: 't-neutral', icon: 'apple' },
-    sweet: { tile: 't-neutral', icon: 'cookie' },
-    drink: { tile: 't-neutral', icon: 'cup' },
-    alcohol: { tile: 't-neutral', icon: 'glass' },
-  };
-  const groupStyle = (g) => GROUP_STYLE[g] || { tile: 't-neutral', icon: 'bowl' };
   const THEME_STYLE = {
     auto: { tile: 't-neutral', icon: 'contrast' },
     light: { tile: 't-neutral', icon: 'sun' },
     dark: { tile: 't-neutral', icon: 'moon' },
-  };
-  // The user's own foods get a coloured tile with their first letter.
-  const PALETTE = ['t-neutral'];
-  const initialTile = (name) => {
-    const chars = [...name.trim()];
-    const hash = chars.reduce((h, c) => h + c.codePointAt(0), 0);
-    return `<span class="tile ${PALETTE[hash % PALETTE.length]}">${esc((chars[0] || '?').toUpperCase())}</span>`;
   };
 
   // One row in a grouped card: coloured icon tile, title, subtitle, chevron.
@@ -1010,12 +993,13 @@
           <label class="search">${icon('search')}
             <input id="food-search" type="search" placeholder="${t('searchPlaceholder')}" aria-label="${t('searchLabel')}" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
           </label>
+          <div id="food-top">${foodTop()}</div>
           <div class="chips" role="group" aria-label="${t('categoriesAria')}">
             ${groups.map((g) => `<button type="button" class="chip${state.group === g ? ' on' : ''}" data-act="pick-group" data-group="${g}" aria-pressed="${state.group === g}">${g === 'all' ? t('allFoods') : esc(groupName(g))}</button>`).join('')}
           </div>
           <div id="food-results">${foodResults()}</div>
           <div class="sticky-foot">
-            <button type="button" class="btn-secondary center" data-act="start-custom">${t('cantFind')}</button>
+            <button type="button" class="btn-primary" data-act="start-custom"><span class="plus-dot">${icon('plus')}</span>${t('typeItButton')}</button>
           </div>
         </section>`;
     },
@@ -1047,9 +1031,13 @@
           </div>
           <div class="field">
             <div class="label">${t('customKcal')}</div>
+            <div class="kcal-picks" role="group" aria-label="${t('kcalPicksLabel')}">
+              ${KCAL_PICKS.map((p) => `<button type="button" class="kcal-pick" data-act="kcal-pick" data-kcal="${p.kcal}" aria-pressed="false">
+                  <span class="kcal-pick-name">${t(`pick_${p.key}`)}</span><span class="kcal-pick-v">${t('pickKcal', fmt(p.kcal))}</span>
+                </button>`).join('')}
+            </div>
             ${stepper({ id: 'custom-kcal', value: 300, unit: t('customUnit'), step: 50, min: 1, max: 10000, decimals: 0, label: t('customAria') })}
           </div>
-          <p class="muted">${t('customHint')}</p>
           <button type="button" class="btn-primary" data-act="add-custom">${t('customAdd')}</button>
         </section>`;
     },
@@ -1234,44 +1222,57 @@
     return [...byName.values()].sort((a, b) => b.count - a.count || (b.last > a.last ? 1 : -1));
   }
 
+  // A built-in name like "ごはん（茶碗1杯）" shows as "ごはん" with "茶碗1杯・234 kcal" underneath.
+  function splitFoodName(name) {
+    const m = name.match(/^(.+?)\s*[（(](.+)[）)]\s*$/);
+    return m ? { title: m[1], detail: m[2] } : { title: name, detail: '' };
+  }
+
+  // The user's own dishes (mostly home cooking): one tap adds them again, same as last time.
+  const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
+      <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
+      <span class="add-dot" aria-hidden="true">${icon('plus')}</span>
+    </button>`;
+
+  // Above the categories. Without a search: the user's own dishes. While searching: a row that
+  // types the searched name in straight away, then the user's own dishes that match.
+  function foodTop() {
+    const raw = state.query.trim();
+    const q = norm(raw);
+    if (!q) {
+      const usual = state.mine.slice(0, 5);
+      return usual.length ? `<h2>${t('oftenHave')}</h2><div class="card list plain">${usual.map(mineRow).join('')}</div>` : '';
+    }
+    const mine = state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q)).slice(0, 5);
+    return `<div class="card list plain">
+        <button type="button" class="list-row typed" data-act="start-custom">
+          <span class="add-dot" aria-hidden="true">${icon('pencil')}</span>
+          <span class="list-main"><span class="list-title">${t('typeItNamed', esc(raw))}</span></span>
+          ${icon('next')}
+        </button>
+        ${mine.map(([m, i]) => mineRow(m, i)).join('')}
+      </div>`;
+  }
+
+  // The built-in list (below the categories): short name, portion and calories underneath.
   function foodResults() {
     const q = norm(state.query);
     const group = state.group;
     const inGroup = (f) => group === 'all' || f.g === group;
-    // The user's own foods add straight away (same as last time).
-    const mineTile = (m, i) => `<button type="button" class="fav" data-act="add-again" data-idx="${i}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
-        ${initialTile(m.name)}
-        <span><span class="fav-name d-block">${esc(m.name)}</span><span class="fav-sub d-block">${t('kcal', fmt(m.kcal))}</span></span>
-        <span class="fav-add" aria-hidden="true">${icon('plus')}</span>
-      </button>`;
-    const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}">
-        ${initialTile(m.name)}
-        <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
-        ${icon('plus', 'accent')}
-      </button>`;
     const builtRow = (f) => {
-      const st = groupStyle(f.g);
+      const { title, detail } = splitFoodName(foodName(f));
       return `<button type="button" class="list-row" data-act="pick-food" data-idx="${FOODS.indexOf(f)}">
-          <span class="tile ${st.tile}">${icon(st.icon)}</span>
-          <span class="list-main"><span class="list-title">${esc(foodName(f))}</span><span class="list-sub">${t('about', fmt(f.kcal))}</span></span>
+          <span class="list-main"><span class="list-title">${esc(title)}</span><span class="list-sub">${detail ? t('foodSub', esc(detail), fmt(f.kcal)) : t('kcal', fmt(f.kcal))}</span></span>
           ${icon('next')}
         </button>`;
     };
-
     if (!q) {
-      const usual = group === 'all' ? state.mine.slice(0, 4) : [];
       const shown = group === 'all' ? FOOD_GROUPS : [group];
-      return (usual.length ? `<h2>${t('oftenHave')}</h2><div class="fav-grid">${usual.map(mineTile).join('')}</div>` : '')
-        + shown.map((g) => `<h2>${esc(groupName(g))}</h2><div class="card list">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
+      return shown.map((g) => `<h2>${esc(groupName(g))}</h2><div class="card list plain">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
     }
-
-    const mine = group === 'all' ? state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q)) : [];
-    const mineKeys = new Set(mine.map(([m]) => m.key));
+    const mineKeys = new Set(state.mine.filter((m) => m.key.includes(q)).map((m) => m.key));
     const built = FOODS.filter((f) => inGroup(f) && f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
-    if (!mine.length && !built.length) {
-      return `<p class="muted">${t('notFound', esc(state.query.trim()))}</p>`;
-    }
-    return `<h2>${t('matches')}</h2><div class="card list">${mine.map(([m, i]) => mineRow(m, i)).join('')}${built.map(builtRow).join('')}</div>`;
+    return built.length ? `<h2>${t('matches')}</h2><div class="card list plain">${built.map(builtRow).join('')}</div>` : '';
   }
 
   // ---------- Rendering & navigation ----------
@@ -1675,6 +1676,16 @@
       return addEntry(m.name, m.kcal, m.portion);
     },
     'start-custom': () => go('custom', { customName: state.query.trim() }),
+    'kcal-pick': (el) => {
+      const input = $('#custom-kcal');
+      input.value = fmt(Number(el.dataset.kcal));
+      $('#custom-kcal-error').hidden = true;
+      $$('.kcal-pick').forEach((b) => {
+        const on = b === el;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on);
+      });
+    },
     'add-custom': () => {
       const name = $('#custom-name').value.trim().slice(0, 60) || t('customDefaultName');
       const kcal = Math.round(parseNum($('#custom-kcal').value));
@@ -1763,6 +1774,7 @@
   document.addEventListener('input', (e) => {
     if (e.target.id === 'food-search') {
       state.query = e.target.value;
+      $('#food-top').innerHTML = foodTop();
       $('#food-results').innerHTML = foodResults();
     } else if (e.target.id === 'custom-name') {
       state.customName = e.target.value;
