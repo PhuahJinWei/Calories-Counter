@@ -22,6 +22,27 @@ light or dark under その他 → 表示モード (More → Appearance). The cho
 - The weight entered during setup is saved as that day's weigh-in. If weight later changes by 3 kg or more,
   the Today screen offers to review the goal.
 
+**Calorie balance (My progress):** for each week (Monday–Sunday) or month, the app adds up
+"calories needed to stay the same weight − calories eaten" for every day that has food written down.
+Days with nothing written down are left out rather than counted as a full deficit. The daily need is
+recalculated from that day's weight. The total is also shown as body fat at 7,200 kcal ≈ 1 kg.
+Without height/age/activity it compares with the daily goal instead, and says so.
+
+**My progress layout:** one 週/月 switch and one ‹ › control the whole screen, and every number appears once.
+1. Summary card: "維持カロリーより 1,878 kcal 少なめ", then average a day / days within goal / weight change.
+   The week view adds a bar per day (coloured like the calendar: rose ○ within goal, amber △ over, with the
+   目標 and 維持 lines labelled on the chart; tap a bar to open that day). The month view shows the calendar.
+2. Weight card: today's weight, BMI (Japanese standard), the last 30 days with a kg scale and a straight trend line.
+3. Steps card (only when steps were saved): average and days the target was reached, plus bars in the week view.
+4. "ⓘ 計算方法について": all explanations and sources, closed by default.
+
+Charts are plain SVG (they work offline) with text of at least 13px.
+
+**Steps:** web apps cannot read Apple Health, so steps are typed in from the iPhone Health app (Today → 歩数を記録する).
+The daily target line is from 厚生労働省「健康づくりのための身体活動・運動ガイド2023」: 8,000 steps for adults,
+6,000 for people aged 65 and over. Steps are shown for information only and are not added to the calorie balance,
+because the activity level chosen in setup already includes everyday walking.
+
 All of these numbers are at the top of `app.js`.
 
 ## Files
@@ -30,10 +51,10 @@ All of these numbers are at the top of `app.js`.
 |---|---|
 | `index.html` | Page shell: tab bar and dialogs (the screens are drawn by `app.js`) |
 | `styles.css` | Look & feel (light + dark mode) |
-| `app.js` | App logic: screens (Today, My progress with the month calendar, More), adding food, weigh-ins, backup/restore |
+| `app.js` | App logic: screens (Today, My progress with the month calendar and calorie balance charts, More), adding food, weigh-ins, steps, backup/restore |
 | `i18n.js` | All on-screen text, in Japanese and English. Edit wording here |
 | `foods.js` | Built-in Japanese food list (with kana readings for search, English names and rough calories). Edit freely |
-| `db.js` | On-device database (IndexedDB) |
+| `db.js` | On-device database (IndexedDB). Version 2 added the steps store; upgrades must only add stores, never remove data |
 | `sw.js` | Service worker: lets the app open with no internet |
 | `manifest.webmanifest`, `icons/` | App name and Home Screen icon |
 
@@ -53,18 +74,29 @@ This only serves the **code**. Your entries never leave the phone.
    branch **main**, folder **/ (root)**, and click **Save**.
 5. After a minute or so the page shows your address: `https://<your-username>.github.io/calorie-tracker/`
 
-### 2. Install it on the iPhone
+### 2. Install it on the phone
 
+Best done **before** the setup screens. The same guide is in the app: the start page has a
+"ホーム画面に追加する方法" link (and More → このアプリをホーム画面に置く), with iPhone and Android tabs.
+
+**iPhone (Safari)**
 1. Open that address in **Safari**.
 2. Tap **Share** → **Add to Home Screen** → **Add**.
-3. Open the app **from the new Home Screen icon** (not from Safari) and go to **More → Show extra options**.
-   It should say *Opened from home screen: Yes*. *Protected storage* should normally say *Yes*.
+
+**Android (Chrome)**
+1. Open that address in **Chrome**.
+2. Tap the in-app **アプリとしてインストール** button if it appears (Chrome offers one-tap install),
+   or tap **⋮** → **Add to Home screen** / **Install app** → **Install**.
+
+Then open the app **from the new icon** and go to **More → Show extra options**.
+It should say *Opened from home screen: Yes*. *Protected storage* should normally say *Yes*.
 
 After that, the app works fully offline. You'll only need the internet again when you update it.
 
 ## Keeping your data safe
 
-- **The Home Screen app and Safari keep separate data.** Always use the icon.
+- **iPhone: the Home Screen app and Safari keep separate data.** Always use the icon.
+  (On Android, the installed app and Chrome share the same data.)
 - **Removing the app icon deletes its data.** Export a backup first.
 - **Back up regularly:** More → *Keep my diary safe* → *Save a copy now* → **Save to Files** → iCloud Drive.
   The Today screen reminds you if your last copy is more than 7 days old.

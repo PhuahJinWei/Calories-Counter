@@ -28,6 +28,11 @@
   const HEIGHT_MIN = 100;
   const HEIGHT_MAX = 250;
   const REVIEW_KG = 3; // offer to review the goal after this much weight change
+  const KCAL_PER_KG_FAT = 7200; // widely used in Japan: about 7,200 kcal ≈ 1 kg of body fat
+  const STEPS_MAX = 100000;
+  // Daily step targets: 厚生労働省「健康づくりのための身体活動・運動ガイド2023」
+  // (also 健康日本21 第三次): adults 8,000, aged 65 and over 6,000.
+  const stepTarget = (age) => (age >= 65 ? 6000 : 8000);
 
   // ---- BMI (Japanese standards, not the US/WHO ones) ----
   // Categories: 日本肥満学会 (JASSO) 肥満度分類 — obese from BMI 25 (US/WHO: 30).
@@ -70,9 +75,13 @@
     mine: [], // the user's own past foods, most used first
     customName: '',
     notice: null, // { text, kind?, undo? }
-    calMonth: todayKey().slice(0, 7), // 'YYYY-MM' shown in the progress calendar
-    calMode: 'kcal', // 'kcal' | 'weight'
+    // My progress: one period for the whole screen
+    balMode: 'week', // 'week' | 'month'
+    balWeek: null, // Monday of the week shown (null = this week)
+    calMonth: todayKey().slice(0, 7), // 'YYYY-MM' of the month shown
+    calMode: 'kcal', // what the month calendar shows: 'kcal' | 'weight' | 'steps'
     advanced: false,
+    helpOs: null, // install guide shown on the help screen (null = this phone's)
     theme: 'auto', // 'auto' (follow the iPhone) | 'light' | 'dark'
   };
   let lastSeenToday = state.date;
@@ -144,6 +153,22 @@
   const fmt = (n) => Math.round(n).toLocaleString(I18N.locale);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  // Which phone this is, so guides and wording fit (newer iPads report themselves as Macs with touch).
+  const PLATFORM = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    ? 'ios' : /Android/i.test(navigator.userAgent) ? 'android' : 'other';
+  // Android Chrome can install the app in one tap. It offers that through this event,
+  // which is kept for the "install" button. iPhone has no such option, so it gets the steps.
+  let installPrompt = null;
+  const installScreens = ['welcome', 'help'];
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    if (installScreens.includes(state.screen)) render().catch(showError);
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    if (installScreens.includes(state.screen)) render().catch(showError);
+  });
   const mealName = (m) => t(`meal_${m}`);
   const foodName = (f) => f[I18N.lang] || f.ja;
   const groupName = (g) => FOOD_GROUP_NAMES[g][I18N.lang] || FOOD_GROUP_NAMES[g].ja;
@@ -152,16 +177,22 @@
   const ageNow = () => (state.birthYear ? new Date().getFullYear() - state.birthYear : null);
   const bmiOf = (kg, cm) => kg / ((cm / 100) ** 2);
   const bmiCategory = (bmi) => BMI_CATEGORIES.find(([limit]) => bmi < limit)[1];
-  const profileReady = () => SEXES.includes(state.sex) && ageNow() >= AGE_MIN && state.heightCm > 0
-    && state.bodyKg > 0 && ACTIVITY[state.activity] !== undefined;
+  // Everything except weight is known (weight changes day to day, so it is passed in).
+  const canEstimateNeed = () => SEXES.includes(state.sex) && ageNow() >= AGE_MIN && state.heightCm > 0
+    && ACTIVITY[state.activity] !== undefined;
+  const profileReady = () => canEstimateNeed() && state.bodyKg > 0;
+  const bmrFor = (kg) => (0.1238 + 0.0481 * kg + 0.0234 * state.heightCm - 0.0138 * ageNow()
+    - 0.5473 * SEX_INDEX[state.sex]) * 1000 / 4.186;
+  // Calories a day to stay at this weight.
+  const maintenanceFor = (kg) => bmrFor(kg) * ACTIVITY[state.activity];
 
   // Everything the goal screens need: BMR, daily need, BMI, warnings and the suggested goal.
   function plan(type) {
     if (!profileReady()) return null;
     const age = ageNow();
     const kg = state.bodyKg;
-    const bmr = (0.1238 + 0.0481 * kg + 0.0234 * state.heightCm - 0.0138 * age - 0.5473 * SEX_INDEX[state.sex]) * 1000 / 4.186;
-    const need = bmr * ACTIVITY[state.activity];
+    const bmr = bmrFor(kg);
+    const need = maintenanceFor(kg);
     const bmi = bmiOf(kg, state.heightCm);
     const [lo, hi] = targetBmi(age);
     let adjust = GOAL_TYPES[type].adjust;
@@ -197,6 +228,8 @@
     const key = LEGACY_PORTIONS[portion] || portion;
     return PORTIONS.some((p) => p.key === key) ? t(`portion_${key}`) : portion;
   }
+  // On the Today list only unusual portions are worth a word; "normal" says nothing.
+  const portionNote = (portion) => ((LEGACY_PORTIONS[portion] || portion) === 'normal' ? '' : portionText(portion));
 
   // For search: full-width → half-width, katakana → hiragana, no spaces or brackets,
   // so "ラーメン", "らーめん" and "ﾗｰﾒﾝ" all match.
@@ -254,35 +287,39 @@
     phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18h2"/>',
     share: '<path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-1"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/>',
+    close: '<path d="M7 7l10 10M17 7L7 17"/>',
+    dots: '<circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none"/>',
+    download: '<path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+    steps: '<path d="M8 3c1.7 0 2.5 1.8 2.5 4S9.7 11.5 8 11.5 5.5 9.2 5.5 7 6.3 3 8 3z"/><path d="M6 14.5h4l-.4 2.5a1.6 1.6 0 0 1-3.2 0z"/><path d="M16 7.5c1.7 0 2.5 1.8 2.5 4S17.7 16 16 16s-2.5-2.3-2.5-4.5.8-4 2.5-4z"/><path d="M14 19h4l-.4 2a1.6 1.6 0 0 1-3.2 0z"/>',
     contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
   // Each meal and food type has its own soft colour and icon.
   const MEAL_STYLE = {
-    Breakfast: { tile: 't-peach', icon: 'sun' },
-    Lunch: { tile: 't-pink', icon: 'bowl' },
-    Dinner: { tile: 't-lavender', icon: 'moon' },
-    Snack: { tile: 't-mint', icon: 'apple' },
+    Breakfast: { tile: 't-neutral', icon: 'sun' },
+    Lunch: { tile: 't-neutral', icon: 'bowl' },
+    Dinner: { tile: 't-neutral', icon: 'moon' },
+    Snack: { tile: 't-neutral', icon: 'apple' },
   };
   const GROUP_STYLE = {
-    staple: { tile: 't-peach', icon: 'noodles' },
-    dish: { tile: 't-pink', icon: 'donburi' },
-    side: { tile: 't-mint', icon: 'leaf' },
-    konbini: { tile: 't-lavender', icon: 'onigiri' },
-    fruit: { tile: 't-mint', icon: 'apple' },
-    sweet: { tile: 't-peach', icon: 'cookie' },
-    drink: { tile: 't-lavender', icon: 'cup' },
-    alcohol: { tile: 't-amber', icon: 'glass' },
+    staple: { tile: 't-neutral', icon: 'noodles' },
+    dish: { tile: 't-neutral', icon: 'donburi' },
+    side: { tile: 't-neutral', icon: 'leaf' },
+    konbini: { tile: 't-neutral', icon: 'onigiri' },
+    fruit: { tile: 't-neutral', icon: 'apple' },
+    sweet: { tile: 't-neutral', icon: 'cookie' },
+    drink: { tile: 't-neutral', icon: 'cup' },
+    alcohol: { tile: 't-neutral', icon: 'glass' },
   };
-  const groupStyle = (g) => GROUP_STYLE[g] || { tile: 't-pink', icon: 'bowl' };
+  const groupStyle = (g) => GROUP_STYLE[g] || { tile: 't-neutral', icon: 'bowl' };
   const THEME_STYLE = {
-    auto: { tile: 't-pink', icon: 'contrast' },
-    light: { tile: 't-peach', icon: 'sun' },
-    dark: { tile: 't-lavender', icon: 'moon' },
+    auto: { tile: 't-neutral', icon: 'contrast' },
+    light: { tile: 't-neutral', icon: 'sun' },
+    dark: { tile: 't-neutral', icon: 'moon' },
   };
   // The user's own foods get a coloured tile with their first letter.
-  const PALETTE = ['t-pink', 't-peach', 't-lavender', 't-mint'];
+  const PALETTE = ['t-neutral'];
   const initialTile = (name) => {
     const chars = [...name.trim()];
     const hash = chars.reduce((h, c) => h + c.codePointAt(0), 0);
@@ -311,60 +348,182 @@
   }
 
   // Big number with − / + buttons. The number itself can also be typed.
-  function stepper({ id, value, unit, step, min, max, decimals, label, bigStep, bigUnit }) {
+  function stepper({ id, value, unit, step, min, max, decimals, label }) {
     const data = `data-target="${id}" data-min="${min}" data-max="${max}" data-dec="${decimals}"`;
+    const shown = decimals ? value : fmt(Number(value)); // "1,650", like every other number in the app
     return `<div class="card">
         <div class="stepper">
           <button type="button" class="btn-round" data-act="step" data-delta="-${step}" ${data} aria-label="${t('less')}">${icon('minus')}</button>
           <div class="stepper-value">
             <input id="${id}" class="big-number" type="text" inputmode="${decimals ? 'decimal' : 'numeric'}"
-              value="${value}" aria-label="${label}" autocomplete="off" enterkeyhint="done">
+              value="${shown}" aria-label="${label}" autocomplete="off" enterkeyhint="done">
             <div class="muted">${unit}</div>
           </div>
           <button type="button" class="btn-round" data-act="step" data-delta="${step}" ${data} aria-label="${t('more')}">${icon('plus')}</button>
         </div>
-        ${bigStep ? `<div class="stepper-big">
-          <button type="button" class="btn-small" data-act="step" data-delta="-${bigStep}" ${data}>${t('bigLess', bigStep, bigUnit)}</button>
-          <button type="button" class="btn-small" data-act="step" data-delta="${bigStep}" ${data}>${t('bigMore', bigStep, bigUnit)}</button>
-        </div>` : ''}
       </div>
       <p class="field-error" id="${id}-error" hidden></p>`;
   }
 
-  // Month calendar for the progress screen. Calories mode marks each day ○ (within goal)
-  // or △ (over), the way Japanese forms do; weight mode shows that day's weigh-in.
-  // Weeks start on Sunday, like Japanese calendars.
-  function calendarCard(foods, weights) {
+  // ---------- My progress ----------
+  // One 週/月 switch and one ‹ › drive the whole screen. The week view shows a bar per day,
+  // the month view shows the calendar; both share one summary, so each number appears once.
+  // Explanations and sources sit behind one "how these numbers work" link.
+
+  // Weeks run Monday to Sunday, the same as the week strip on the Today screen.
+  const mondayOf = (k) => addDays(k, -((fromKey(k).getDay() + 6) % 7));
+
+  // Charts are drawn in a 300-unit-wide SVG that fills the card (about 300–330px on a phone),
+  // so 13–14 units of text ≈ 13–14px on screen.
+  const CHART_W = 300;
+  const CHART_PAD = 4;
+
+  // The week or month being shown, kept between the first entry and today.
+  function progressPeriod(foods, weights, steps) {
     const today = todayKey();
+    let first = today;
+    for (const f of foods) if (f.date < first) first = f.date;
+    if (weights.length && weights[0].date < first) first = weights[0].date;
+    for (const s of steps) if (s.date < first) first = s.date;
+
+    if (state.balMode === 'week') {
+      const thisWeek = mondayOf(today);
+      let start = state.balWeek || thisWeek;
+      if (start > thisWeek) start = thisWeek;
+      if (start < mondayOf(first)) start = mondayOf(first);
+      state.balWeek = start;
+      const dates = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+      const md = (k) => fromKey(k).toLocaleDateString(I18N.locale, { month: 'numeric', day: 'numeric' });
+      return { isWeek: true, dates, title: t('balRange', md(dates[0]), md(dates[6])), atStart: start <= mondayOf(first), atEnd: start >= thisWeek };
+    }
     const thisMonth = today.slice(0, 7);
-    // Months can go back to the first month with any entry, and never into the future.
-    let firstMonth = thisMonth;
-    for (const f of foods) if (f.date.slice(0, 7) < firstMonth) firstMonth = f.date.slice(0, 7);
-    if (weights.length && weights[0].date.slice(0, 7) < firstMonth) firstMonth = weights[0].date.slice(0, 7);
+    const firstMonth = first.slice(0, 7);
     const month = state.calMonth < firstMonth ? firstMonth : state.calMonth > thisMonth ? thisMonth : state.calMonth;
     state.calMonth = month;
+    const [y, m] = month.split('-').map(Number);
+    const dates = Array.from({ length: new Date(y, m, 0).getDate() }, (_, i) => `${month}-${pad(i + 1)}`);
+    const title = new Date(y, m - 1, 1).toLocaleDateString(I18N.locale, { year: 'numeric', month: 'long' });
+    return { isWeek: false, month, dates, title, atStart: month <= firstMonth, atEnd: month >= thisMonth };
+  }
 
+  // Totals for a set of days, compared with the calories that keep the person's weight
+  // (worked out from each day's own weight). Without height/age/activity the goal is used.
+  function periodStats(dates, foods, weights) {
+    const today = todayKey();
+    const inPeriod = new Set(dates);
+    const kcalByDay = new Map();
+    for (const f of foods) if (inPeriod.has(f.date)) kcalByDay.set(f.date, (kcalByDay.get(f.date) || 0) + f.kcal);
+    const kgOn = (d) => {
+      let kg = weights.length ? weights[0].kg : state.latestKg;
+      for (const w of weights) { if (w.date > d) break; kg = w.kg; }
+      return kg;
+    };
+    const estimate = canEstimateNeed() && (weights.length > 0 || state.latestKg > 0);
+    const days = dates.map((d) => ({
+      d,
+      kcal: d > today ? undefined : kcalByDay.get(d),
+      keep: estimate ? maintenanceFor(kgOn(d)) : state.goal,
+    }));
+    // Days with nothing written down are left out, not counted as a full deficit.
+    const logged = days.filter((x) => x.kcal !== undefined);
+    const periodWeights = weights.filter((w) => inPeriod.has(w.date));
+    return {
+      estimate,
+      days,
+      logged,
+      balance: Math.round(logged.reduce((s, x) => s + (x.keep - x.kcal), 0)), // + = ate less
+      within: logged.filter((x) => x.kcal <= state.goal).length,
+      avgKcal: logged.length ? logged.reduce((s, x) => s + x.kcal, 0) / logged.length : null,
+      avgKeep: logged.length ? logged.reduce((s, x) => s + x.keep, 0) / logged.length
+        : estimate ? maintenanceFor(kgOn(today)) : state.goal,
+      kgChange: periodWeights.length >= 2
+        ? Math.round((periodWeights[periodWeights.length - 1].kg - periodWeights[0].kg) * 10) / 10 : null,
+    };
+  }
+
+  const signedKg = (v) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(1)} kg`;
+
+  // Headline, three numbers, then the week's bars or the month's calendar.
+  function summaryCard(period, stats, foods, weights, steps) {
+    let headline;
+    if (!stats.logged.length) headline = `<p class="sum-empty">${t('balNone')}</p>`;
+    else {
+      const amount = Math.abs(stats.balance);
+      const even = amount < 50;
+      const less = stats.balance > 0;
+      // Small label above, big number below: reads top-down and never wraps mid-phrase.
+      headline = `<div class="bal-label">${t(stats.estimate ? 'balLabel' : 'balLabelGoal')}</div>
+        <div class="bal-total${even ? '' : less ? ' under' : ' over'}">${even ? t('balEven') : t(less ? 'balLess' : 'balMore', fmt(amount))}</div>
+        ${even || !stats.estimate ? '' : `<div class="bal-sub">${t(less ? 'balFatLoss' : 'balFatGain', (amount / KCAL_PER_KG_FAT).toFixed(1))}</div>`}`;
+    }
+    const tiles = [
+      [stats.avgKcal === null ? '—' : fmt(stats.avgKcal), t('sumAvg')],
+      [stats.logged.length ? t('calWithinValue', stats.within, stats.logged.length) : '—', t('sumWithin')],
+      [stats.kgChange === null ? '—' : signedKg(stats.kgChange), t('sumWeight')],
+    ];
+    return `<div class="card sum-card">
+        ${headline}
+        <div class="sum-tiles">${tiles.map(([v, l]) => `<div class="sum-tile"><div class="sum-v">${v}</div><div class="sum-l">${l}</div></div>`).join('')}</div>
+        ${period.isWeek ? weekChart(stats) : calendarGrid(period.month, foods, weights, steps)}
+      </div>`;
+  }
+
+  // One bar per day for calories eaten, coloured like the calendar (rose = within goal,
+  // amber = over), with the goal and "maintain" lines labelled right on the chart.
+  // Each bar shows its number and opens that day when tapped.
+  function weekChart(stats) {
+    if (!stats.logged.length) return '';
+    const today = todayKey();
+    const W = CHART_W;
+    const H = 200;
+    const right = W - 42; // labels for the lines sit to the right of the bars
+    const top = 24;
+    const base = H - 30;
+    const max = Math.max(state.goal, stats.avgKeep, ...stats.logged.map((x) => x.kcal)) * 1.08;
+    const y = (v) => base - (v / max) * (base - top);
+    const slot = (right - CHART_PAD) / 7;
+    const barW = slot * 0.62;
+    const cols = stats.days.map((x, i) => {
+      const cx = CHART_PAD + slot * (i + 0.5);
+      const label = `<text class="chart-label" x="${cx.toFixed(1)}" y="${H - 8}" text-anchor="middle">${fromKey(x.d).toLocaleDateString(I18N.locale, { weekday: 'narrow' })}</text>`;
+      if (x.d > today) return label;
+      if (x.kcal === undefined) return `${label}<text class="chart-empty" x="${cx.toFixed(1)}" y="${base - 6}" text-anchor="middle">—</text>`;
+      const over = x.kcal > state.goal;
+      const by = y(x.kcal);
+      return `<g class="chart-col" data-act="open-day" data-date="${x.d}" role="button" aria-label="${esc(t('calAriaKcal', longDate(x.d), fmt(x.kcal), over))}">
+          <rect class="chart-hit" x="${(cx - slot / 2).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H}"/>
+          <rect class="chart-bar ${over ? 'over' : 'ok'}" x="${(cx - barW / 2).toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(2, base - by).toFixed(1)}" rx="6"/>
+          <text class="chart-value" x="${cx.toFixed(1)}" y="${(by - 7).toFixed(1)}" text-anchor="middle">${fmt(x.kcal)}</text>
+          ${label}
+        </g>`;
+    }).join('');
+    const goalY = y(state.goal);
+    let keepY = stats.estimate ? y(stats.avgKeep) : null;
+    // Keep the two line labels from overlapping when the values are close.
+    let keepLabelY = keepY;
+    if (keepY !== null && Math.abs(keepY - goalY) < 15) keepLabelY = keepY < goalY ? goalY - 15 : goalY + 15;
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="group" aria-label="${esc(t('balChartAria'))}">
+        <line class="chart-base" x1="${CHART_PAD}" x2="${right}" y1="${base}" y2="${base}"/>
+        ${keepY !== null ? `<line class="chart-keep" x1="${CHART_PAD}" x2="${right}" y1="${keepY.toFixed(1)}" y2="${keepY.toFixed(1)}"/>
+          <text class="chart-line-label keep" x="${W - 2}" y="${(keepLabelY + 5).toFixed(1)}" text-anchor="end">${t('chartKeepLabel')}</text>` : ''}
+        <line class="chart-goal" x1="${CHART_PAD}" x2="${right}" y1="${goalY.toFixed(1)}" y2="${goalY.toFixed(1)}"/>
+        <text class="chart-line-label goal" x="${W - 2}" y="${(goalY + 5).toFixed(1)}" text-anchor="end">${t('chartGoalLabel')}</text>
+        ${cols}
+      </svg>`;
+  }
+
+  // Month calendar (weeks start on Sunday, like Japanese calendars). Calories mode marks
+  // each day ○ (within goal) or △ (over); weight and steps modes show that day's number.
+  function calendarGrid(month, foods, weights, steps) {
+    const today = todayKey();
     const [y, m] = month.split('-').map(Number);
     const daysInMonth = new Date(y, m, 0).getDate();
     const lead = new Date(y, m - 1, 1).getDay(); // 0 = Sunday
     const prefix = `${month}-`;
     const kcalByDay = new Map();
     for (const f of foods) if (f.date.startsWith(prefix)) kcalByDay.set(f.date, (kcalByDay.get(f.date) || 0) + f.kcal);
-    const monthWeights = weights.filter((w) => w.date.startsWith(prefix)); // sorted by date (the key)
-    const kgByDay = new Map(monthWeights.map((w) => [w.date, w.kg]));
-
-    // Month summary
-    const logged = [...kcalByDay.values()];
-    const within = logged.filter((v) => v <= state.goal).length;
-    const avg = logged.length ? logged.reduce((a, b) => a + b, 0) / logged.length : null;
-    const change = monthWeights.length >= 2
-      ? Math.round((monthWeights[monthWeights.length - 1].kg - monthWeights[0].kg) * 10) / 10 : null;
-    const summary = [
-      [t('calAvg'), avg === null ? '—' : t('kcal', fmt(avg))],
-      [t('calWithin'), logged.length ? t('calWithinValue', within, logged.length) : '—'],
-      [t('calWeightChange'), change === null ? '—' : `${change > 0 ? '+' : change < 0 ? '−' : '±'}${Math.abs(change).toFixed(1)} kg`],
-      [t('calLogged'), t('calDays', logged.length)],
-    ];
+    const kgByDay = new Map(weights.filter((w) => w.date.startsWith(prefix)).map((w) => [w.date, w.kg]));
+    const stepsByDay = new Map(steps.filter((s) => s.date.startsWith(prefix)).map((s) => [s.date, s.count]));
 
     // 2023-01-01 was a Sunday: use it to get localized weekday initials (日 月 … / S M …).
     const weekdays = [0, 1, 2, 3, 4, 5, 6].map((i) => new Date(2023, 0, 1 + i).toLocaleDateString(I18N.locale, { weekday: 'narrow' }));
@@ -387,33 +546,158 @@
         cls += ' weighed';
         val = kgByDay.get(key).toFixed(1);
         aria = t('calAriaWeight', longDate(key), val);
+      } else if (state.calMode === 'steps' && stepsByDay.has(key)) {
+        cls += ' stepped';
+        val = fmt(stepsByDay.get(key));
+        aria = t('calAriaSteps', longDate(key), val);
       }
       cells += `<button type="button" class="${cls}" data-act="open-day" data-date="${key}" ${key > today ? 'disabled' : ''} aria-label="${esc(aria)}">
           <span class="cal-num">${d}</span>${mark ? `<span class="cal-mark" aria-hidden="true">${mark}</span>` : ''}${val ? `<span class="cal-val">${val}</span>` : ''}
         </button>`;
     }
-
-    const monthName = new Date(y, m - 1, 1).toLocaleDateString(I18N.locale, { year: 'numeric', month: 'long' });
     const legend = state.calMode === 'kcal'
-      ? `<span><b class="cal-key ok">○</b>${t('calLegendWithin', fmt(state.goal))}</span><span><b class="cal-key over">△</b>${t('calLegendOver')}</span>`
-      : `<span>${t('calLegendWeight')}</span>`;
-    return `<div class="card cal-card">
-        <div class="cal-head">
-          <button type="button" class="icon-btn" data-act="cal-month" data-delta="-1" aria-label="${t('calPrev')}" ${month <= firstMonth ? 'disabled' : ''}>${icon('back')}</button>
-          <h2 class="cal-title" aria-live="polite">${monthName}</h2>
-          <button type="button" class="icon-btn" data-act="cal-month" data-delta="1" aria-label="${t('calNext')}" ${month >= thisMonth ? 'disabled' : ''}>${icon('next')}</button>
-        </div>
-        <div class="cal-stats">${summary.map(([l, v]) => `<div class="cal-stat"><div class="cal-stat-l">${l}</div><div class="cal-stat-v">${v}</div></div>`).join('')}</div>
-        <div class="seg two" role="group" aria-label="${t('calModeAria')}">
-          ${['kcal', 'weight'].map((mode) => `<button type="button" data-act="cal-mode" data-mode="${mode}" class="${state.calMode === mode ? 'on' : ''}" aria-pressed="${state.calMode === mode}">${t(mode === 'kcal' ? 'calModeKcal' : 'calModeWeight')}</button>`).join('')}
+      ? `<span><b class="cal-key ok">○</b>${t('balLegendWithin')}</span><span><b class="cal-key over">△</b>${t('calLegendOver')}</span>`
+      : `<span>${t(state.calMode === 'weight' ? 'calLegendWeight' : 'calLegendSteps')}</span>`;
+    return `<div class="seg three" role="group" aria-label="${t('calModeAria')}">
+          ${[['kcal', 'calModeKcal'], ['weight', 'calModeWeight'], ['steps', 'calModeSteps']].map(([mode, label]) => `<button type="button" data-act="cal-mode" data-mode="${mode}" class="${state.calMode === mode ? 'on' : ''}" aria-pressed="${state.calMode === mode}">${t(label)}</button>`).join('')}
         </div>
         <div class="cal-grid">
           ${weekdays.map((w, i) => `<span class="cal-dow${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}" aria-hidden="true">${w}</span>`).join('')}
           ${cells}
         </div>
-        <div class="cal-legend">${legend}</div>
-        <p class="muted small">${t('tapDay')}</p>
+        <div class="cal-legend">${legend}</div>`;
+  }
+
+  // Weight now, BMI (Japanese standard) and the last 30 days with a straight trend line.
+  function weightCard(weights) {
+    if (!weights.length) {
+      return `<div class="card mini-card">
+          <div class="mini-head"><span class="eyebrow">${t('sumWeight')}</span></div>
+          <p class="sum-empty">${t('wNone')}</p>
+          <p class="muted small">${t('wNoneDetail')}</p>
+        </div>`;
+    }
+    const today = todayKey();
+    const last = weights[weights.length - 1];
+    const bmi = state.heightCm ? bmiOf(last.kg, state.heightCm) : null;
+    const from = addDays(today, -29);
+    const pts = weights.filter((w) => w.date >= from && w.date <= today);
+
+    let chart;
+    let trendText = '';
+    if (pts.length < 3) chart = `<p class="muted small">${t('chartWeightNone30')}</p>`;
+    else {
+      const W = CHART_W;
+      const H = 170;
+      const left = 40; // room for the kg scale
+      const right = W - 8;
+      const top = 12;
+      const base = H - 28;
+      const dayIndex = (d) => Math.round((fromKey(d) - fromKey(from)) / DAY_MS); // 0..29
+      const px = (i) => left + (i / 29) * (right - left);
+      const kgs = pts.map((p) => p.kg);
+      // Scale in 0.5 kg steps with at least 2 kg of range, so small changes are not blown up.
+      let lo = Math.floor((Math.min(...kgs) - 0.3) * 2) / 2;
+      let hi = Math.ceil((Math.max(...kgs) + 0.3) * 2) / 2;
+      if (hi - lo < 2) { const mid = (hi + lo) / 2; lo = Math.floor((mid - 1) * 2) / 2; hi = lo + 2; }
+      if (Math.round((hi - lo) * 2) % 2) hi += 0.5; // whole-kg range, so the middle label lands on .0 or .5
+      const y = (kg) => top + ((hi - kg) / (hi - lo)) * (base - top);
+      // Least-squares trend line, only when the weigh-ins span at least a week.
+      const xs = pts.map((p) => dayIndex(p.date));
+      let trend = '';
+      if (xs[xs.length - 1] - xs[0] >= 7) {
+        const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+        const my = kgs.reduce((a, b) => a + b, 0) / kgs.length;
+        const slope = xs.reduce((s, v, i) => s + (v - mx) * (kgs[i] - my), 0) / xs.reduce((s, v) => s + (v - mx) ** 2, 0);
+        const at = (i) => my + slope * (i - mx);
+        trend = `<line class="chart-trend" x1="${px(xs[0]).toFixed(1)}" y1="${y(at(xs[0])).toFixed(1)}" x2="${px(xs[xs.length - 1]).toFixed(1)}" y2="${y(at(xs[xs.length - 1])).toFixed(1)}"/>`;
+        const perWeek = Math.round(slope * 7 * 10) / 10;
+        trendText = perWeek === 0 ? t('chartTrendFlat') : t('chartTrend', `${perWeek > 0 ? '+' : '−'}${Math.abs(perWeek).toFixed(1)}`);
+      }
+      const md = (k) => fromKey(k).toLocaleDateString(I18N.locale, { month: 'numeric', day: 'numeric' });
+      chart = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(`${t('chartWeight30')}: ${t('chartWeightChange', pts[0].kg.toFixed(1), last.kg.toFixed(1))}${trendText ? `. ${trendText}` : ''}`)}">
+          ${[hi, (hi + lo) / 2, lo].map((v) => `<line class="chart-grid" x1="${left}" x2="${right}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+            <text class="chart-label" x="${left - 6}" y="${(y(v) + 5).toFixed(1)}" text-anchor="end">${v.toFixed(1)}</text>`).join('')}
+          ${trend}
+          ${pts.map((p) => `<circle class="chart-dot" cx="${px(dayIndex(p.date)).toFixed(1)}" cy="${y(p.kg).toFixed(1)}" r="4.5"/>`).join('')}
+          <text class="chart-label" x="${left}" y="${H - 6}" text-anchor="start">${md(from)}</text>
+          <text class="chart-label" x="${right}" y="${H - 6}" text-anchor="end">${md(today)}</text>
+        </svg>`;
+    }
+    return `<div class="card mini-card">
+        <div class="mini-head">
+          <span class="eyebrow">${t('sumWeight')}</span>
+          ${bmi ? `<span class="mini-side">${t('bmiShort', bmi.toFixed(1), t(`bmi_${bmiCategory(bmi)}`))}</span>` : ''}
+        </div>
+        <div class="mini-big">${last.kg.toFixed(1)}<small> kg</small></div>
+        ${chart}
+        ${trendText ? `<p class="mini-note">${trendText}</p>` : ''}
       </div>`;
+  }
+
+  // Steps for the period (only when some were saved): one line of numbers, plus bars for a week.
+  function stepsCard(period, steps) {
+    const inPeriod = new Set(period.dates);
+    const byDay = new Map(steps.filter((s) => inPeriod.has(s.date)).map((s) => [s.date, s.count]));
+    if (!byDay.size) return '';
+    const target = stepTarget(ageNow() ?? 18);
+    const counts = [...byDay.values()];
+    const met = counts.filter((n) => n >= target).length;
+    const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+
+    let bars = '';
+    if (period.isWeek) {
+      const W = CHART_W;
+      const H = 150;
+      const right = W - 42;
+      const top = 22;
+      const base = H - 28;
+      const max = Math.max(target, ...counts) * 1.1;
+      const y = (v) => base - (v / max) * (base - top);
+      const slot = (right - CHART_PAD) / 7;
+      const barW = slot * 0.62;
+      const cols = period.dates.map((d, i) => {
+        const cx = CHART_PAD + slot * (i + 0.5);
+        const label = `<text class="chart-label" x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle">${fromKey(d).toLocaleDateString(I18N.locale, { weekday: 'narrow' })}</text>`;
+        const n = byDay.get(d);
+        if (n === undefined) return label;
+        const by = y(n);
+        return `<g role="img" aria-label="${esc(t('calAriaSteps', longDate(d), fmt(n)))}">
+            <rect class="chart-bar steps${n >= target ? ' met' : ''}" x="${(cx - barW / 2).toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(2, base - by).toFixed(1)}" rx="6"/>
+            <text class="chart-value small" x="${cx.toFixed(1)}" y="${(by - 7).toFixed(1)}" text-anchor="middle">${fmt(n)}</text>
+            ${label}
+          </g>`;
+      }).join('');
+      bars = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="group" aria-label="${esc(t('stepsSummary', fmt(avg), met, counts.length))}">
+          <line class="chart-base" x1="${CHART_PAD}" x2="${right}" y1="${base}" y2="${base}"/>
+          <line class="chart-target" x1="${CHART_PAD}" x2="${right}" y1="${y(target).toFixed(1)}" y2="${y(target).toFixed(1)}"/>
+          <text class="chart-line-label keep" x="${W - 2}" y="${(y(target) + 5).toFixed(1)}" text-anchor="end">${fmt(target)}</text>
+          ${cols}
+        </svg>`;
+    }
+    return `<div class="card mini-card">
+        <div class="mini-head">
+          <span class="eyebrow">${t('chartSteps')}</span>
+          <span class="mini-side">${t('stepsSummary', fmt(avg), met, counts.length)}</span>
+        </div>
+        ${bars}
+      </div>`;
+  }
+
+  // Every explanation and source, behind one link that is closed by default.
+  function infoBox(stats) {
+    const lines = [
+      t('infoTap'),
+      stats.estimate ? t('infoKeep', fmt(round50(stats.avgKeep))) : t('infoKeepGoal', fmt(state.goal)),
+      t('infoDays'),
+      t('infoFat'),
+      t('bmiStandard'),
+      t('chartStepsSource'),
+    ];
+    return `<details class="info">
+        <summary>${t('infoTitle')}</summary>
+        <div class="info-body">${lines.map((l) => `<p>${l}</p>`).join('')}</div>
+      </details>`;
   }
 
   // ---------- Screens ----------
@@ -453,14 +737,17 @@
           </div>
 
           <ul class="features">
-            <li><span class="tile t-pink">${icon('plus')}</span><span>${t('welcomeF1')}</span></li>
-            <li><span class="tile t-peach">${icon('target')}</span><span>${t('welcomeF2')}</span></li>
-            <li><span class="tile t-mint">${icon('shield')}</span><span>${t('welcomeF3')}</span></li>
+            <li><span class="tile t-accent">${icon('plus')}</span><span>${t('welcomeF1')}</span></li>
+            <li><span class="tile t-neutral">${icon('target')}</span><span>${t('welcomeF2')}</span></li>
+            <li><span class="tile t-neutral">${icon('shield')}</span><span>${t('welcomeF3')}</span></li>
           </ul>
 
           <div class="welcome-cta">
             <button type="button" class="btn-primary" data-act="go" data-to="about">${t('welcomeStart')}${icon('next')}</button>
             <p class="welcome-note">${t('welcomeSetupTime')}</p>
+            ${isStandalone() ? '' : installPrompt
+              ? `<button type="button" class="btn-text center" data-act="install-app">${icon('download')}${t('installNow')}</button>`
+              : `<button type="button" class="btn-text center" data-act="go" data-to="help">${icon('phone')}${t('installLink')}</button>`}
           </div>
         </section>`;
     },
@@ -473,13 +760,10 @@
           <h1 tabindex="-1">${t('aboutTitle')}</h1>
           <p class="muted">${t('aboutSub')}</p>
           <h2>${t('sexLabel')}</h2>
-          <div class="stack">${SEXES.map((s) => `<button type="button" class="choice${state.sex === s ? ' on' : ''}" data-act="pick-sex" data-sex="${s}" aria-pressed="${state.sex === s}">
-              <span class="choice-text"><b>${t(`sex_${s}`)}</b></span>${state.sex === s ? icon('check', 'accent') : ''}
-            </button>`).join('')}</div>
+          <div class="seg three" role="group" aria-label="${t('sexLabel')}">${SEXES.map((s) => `<button type="button" data-act="pick-sex" data-sex="${s}" class="${state.sex === s ? 'on' : ''}" aria-pressed="${state.sex === s}">${t(`sex_${s}`)}</button>`).join('')}</div>
           <p class="field-error" id="sex-error" hidden></p>
           <h2>${t('ageLabel')}</h2>
-          ${stepper({ id: 'age-input', value: age, unit: t('ageUnit'), step: 1, min: AGE_MIN, max: AGE_MAX, decimals: 0, label: t('ageLabel'), bigStep: 10, bigUnit: t('ageUnit') })}
-          <p class="muted small">${t('ageNote')}</p>
+          ${stepper({ id: 'age-input', value: age, unit: t('ageUnit'), step: 1, min: AGE_MIN, max: AGE_MAX, decimals: 0, label: t('ageLabel') })}
           <button type="button" class="btn-primary" data-act="about-next">${t('next')}</button>
         </section>`;
     },
@@ -492,11 +776,10 @@
       return `${topbar('about', onboarding ? t('step', 2, 5) : '')}
         <section class="screen">
           <h1 tabindex="-1">${t('bodyTitle')}</h1>
-          <p class="muted">${t('bodySub')}</p>
           <h2>${t('heightLabel')}</h2>
-          ${stepper({ id: 'height-input', value: Math.round(cm), unit: 'cm', step: 1, min: HEIGHT_MIN, max: HEIGHT_MAX, decimals: 0, label: t('heightLabel'), bigStep: 10, bigUnit: 'cm' })}
+          ${stepper({ id: 'height-input', value: Math.round(cm), unit: 'cm', step: 1, min: HEIGHT_MIN, max: HEIGHT_MAX, decimals: 0, label: t('heightLabel') })}
           <h2>${t('bodyWeightLabel')}</h2>
-          ${stepper({ id: 'body-weight-input', value: kg.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria'), bigStep: 1, bigUnit: 'kg' })}
+          ${stepper({ id: 'body-weight-input', value: kg.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria') })}
           <p class="muted small">${t('bodyWeightNote')}</p>
           <button type="button" class="btn-primary" data-act="body-next">${t('next')}</button>
         </section>`;
@@ -507,7 +790,6 @@
       return `${topbar('body', onboarding ? t('step', 3, 5) : '')}
         <section class="screen">
           <h1 tabindex="-1">${t('activityTitle')}</h1>
-          <p class="muted">${t('activitySub')}</p>
           <div class="stack">
             ${Object.keys(ACTIVITY).map((key) => `<button type="button" class="choice${state.activity === key ? ' on' : ''}" data-act="pick-activity" data-activity="${key}">
                 <span class="choice-text"><b>${t(`activity_${key}_title`)}</b><span class="choice-sub">${t(`activity_${key}_sub`)}</span></span>${icon('next')}
@@ -519,17 +801,11 @@
     async goalType() {
       const onboarding = state.goalFrom === 'onboarding';
       const p = plan('keep');
-      const bmiBox = p ? `<div class="card">
-            <div class="eyebrow">${t('bmiTitle')}</div>
-            <p class="big-sentence">${t('bmiLine', p.bmi.toFixed(1), t(`bmi_${p.category}`))}</p>
-            <p class="muted small">${t('bmiTarget', p.age, p.lo.toFixed(1), p.hi.toFixed(1))}</p>
-            <p class="muted small">${t('bmiStandard')}</p>
-          </div>` : '';
+      const bmiBox = p ? `<p class="bmi-line">${t('bmiOneLine', p.bmi.toFixed(1), t(`bmi_${p.category}`), p.lo.toFixed(1), p.hi.toFixed(1))}</p>` : '';
       return `${topbar('activity', onboarding ? t('step', 4, 5) : '')}
         <section class="screen">
           <h1 tabindex="-1">${t('goalTypeTitle')}</h1>
           ${bmiBox}
-          <p class="muted">${t('goalTypeSub')}</p>
           <div class="stack">
             ${Object.keys(GOAL_TYPES).map((key) => `<button type="button" class="choice${state.goalType === key ? ' on' : ''}" data-act="pick-goal-type" data-type="${key}">
                 <span class="choice-text"><b>${t(`goal_${key}_title`)}</b><span class="choice-sub">${t(`goal_${key}_sub`)}</span></span>${icon('next')}
@@ -551,7 +827,12 @@
         let how = t('goalBasis', fmt(p.bmr), t(`activity_${state.activity}_title`), ACTIVITY[state.activity].toFixed(2), fmt(p.need));
         if (p.adjust < 0) how += `${t('goalAdjustLose', Math.abs(p.adjust))}`;
         if (p.adjust > 0) how += `${t('goalAdjustGain', p.adjust)}`;
-        basis = `<p class="muted small">${how}</p><p class="muted small">${t('goalSource')}</p>`;
+        const keep = t('goalCalcKeep', fmt(round50(p.need)));
+        const adj = p.adjust ? ` ${p.adjust < 0 ? '−' : '+'} ${Math.abs(p.adjust)} kcal` : '';
+        basis = `<p class="goal-calc">${keep}${adj}</p>
+          <details class="info"><summary>${t('infoTitle')}</summary>
+            <div class="info-body"><p>${how}</p><p>${t('goalSource')}</p><p>${t('goalHint')}</p></div>
+          </details>`;
       }
       // When a warning replaced the lose/gain plan, the lead says "keep" so it matches the number.
       const leadType = p && p.adjust === 0 ? 'keep' : type;
@@ -562,7 +843,6 @@
           <p class="lead">${state.suggested ? t(`goal_${leadType}_suggest`) : t('goalLeadChange')}</p>
           ${stepper({ id: 'goal-input', value: state.goalDraft, unit: t('goalUnit'), step: 50, min: GOAL_MIN, max: GOAL_MAX, decimals: 0, label: t('goalAria') })}
           ${basis}
-          <p class="muted">${t('goalHint')}</p>
           ${onboarding ? '' : `<button type="button" class="btn-text" data-act="goal-help">${t('goalHelp')}</button>`}
           <button type="button" class="btn-primary" data-act="save-goal">${onboarding ? t('goalSaveOnboarding') : t('goalSaveChange')}</button>
         </section>`;
@@ -575,7 +855,7 @@
       // The week (Monday to Sunday) that contains the day being shown.
       const weekStart = addDays(date, -((fromKey(date).getDay() + 6) % 7));
       const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount, goalWeight, weekFoods] = await Promise.all([
+      const [foods, weight, lastWeight, lastBackup, foodCount, weightCount, goalWeight, weekFoods, daySteps] = await Promise.all([
         DB.getFoodsByDate(date),
         DB.getWeight(date),
         DB.getWeightBefore(date),
@@ -584,7 +864,9 @@
         DB.count('weights'),
         DB.getSetting('goalWeight', null),
         Promise.all(weekDates.map((d) => (d <= today ? DB.getFoodsByDate(d) : []))),
+        DB.getSteps(date),
       ]);
+      const stepsSub = daySteps ? t(isToday ? 'stepsSubToday' : 'stepsSubPast', fmt(daySteps.count)) : t('stepsSubNone');
 
       // Offer to review the goal once weight has moved a few kg from when it was set.
       const nowKg = (weight || lastWeight || {}).kg;
@@ -635,24 +917,24 @@
               <span class="tile ${st.tile}">${icon(st.icon)}</span>
               <span class="list-main">
                 <span class="list-title">${mealName(meal)}</span>
-                <span class="list-sub">${items.length ? t('mealSummary', items.length, fmt(sub)) : t('nothingYet')}</span>
+                <span class="list-sub">${items.length ? t('kcal', fmt(sub)) : t('nothingYet')}</span>
               </span>
               <button type="button" class="mini-add" data-act="start-add" data-meal="${meal}" aria-label="${esc(t('addToMeal', mealName(meal)))}">${icon('plus')}</button>
             </div>
             ${items.length ? `<div class="meal-items">${items.map((f) => `<div class="food-item">
                 <div class="food-item-main">
                   <div class="food-item-name">${esc(f.name)}</div>
-                  <div class="food-item-sub">${t('kcal', fmt(f.kcal))} · ${esc(portionText(f.portion) || timeOf(f.createdAt))}</div>
+                  <div class="food-item-sub">${t('kcal', fmt(f.kcal))}${portionNote(f.portion) ? ` · ${esc(portionNote(f.portion))}` : ''}</div>
                 </div>
-                <button type="button" class="btn-small" data-act="remove" data-id="${f.id}" aria-label="${esc(t('removeAria', f.name))}">${t('remove')}</button>
+                <button type="button" class="icon-remove" data-act="remove" data-id="${f.id}" aria-label="${esc(t('removeAria', f.name))}">${icon('close')}</button>
               </div>`).join('')}</div>` : ''}
           </div>`;
       }).join('');
 
       const reminders = [];
-      if (!isStandalone()) reminders.push(listRow('data-act="go" data-to="help"', 't-lavender', 'phone', t('installTitle'), t('installText')));
+      if (!isStandalone()) reminders.push(listRow('data-act="go" data-to="help"', 't-neutral', 'phone', t('installTitle'), t('installText')));
       if (needsReview) {
-        reminders.push(listRow('data-act="review-goal"', 't-pink', 'target', t('reviewTitle'),
+        reminders.push(listRow('data-act="review-goal"', 't-neutral', 'target', t('reviewTitle'),
           t('reviewText', `${kgChange > 0 ? '+' : '−'}${Math.abs(kgChange).toFixed(1)}`)));
       }
       if (needsBackup) {
@@ -700,11 +982,13 @@
 
           <button type="button" class="btn-primary" data-act="start-add"><span class="plus-dot">${icon('plus')}</span>${t(isToday ? 'addToday' : 'addPast')}</button>
 
-          <div class="card list">${listRow('data-act="go" data-to="weigh"', 't-lavender', 'scale', t(isToday ? 'weighToday' : 'weighPast'), weightSub)}</div>
+          <div class="card list">
+            ${listRow('data-act="go" data-to="weigh"', 't-lavender', 'scale', t(isToday ? 'weighToday' : 'weighPast'), weightSub)}
+            ${listRow('data-act="go" data-to="steps"', 't-mint', 'steps', t(isToday ? 'stepsToday' : 'stepsPast'), stepsSub)}
+          </div>
 
           <div class="section-head">
             <h2>${t(isToday ? 'ateToday' : 'atePast')}</h2>
-            ${total ? `<span class="muted small">${t('kcal', fmt(total))}</span>` : ''}
           </div>
           <div class="card list">${meals}</div>
 
@@ -782,60 +1066,49 @@
       return `${topbar('today')}
         <section class="screen">
           <h1 tabindex="-1">${isToday ? t('weighTitleToday') : t('weighTitlePast', shortDate(date))}</h1>
-          <p class="muted">${t('weighHelp')}</p>
-          ${stepper({ id: 'weight-input', value: start.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria'), bigStep: 1, bigUnit: 'kg' })}
-          <p class="muted">${note}</p>
+          ${stepper({ id: 'weight-input', value: start.toFixed(1), unit: t('weighUnit'), step: 0.1, min: 20, max: 400, decimals: 1, label: t('weighAria') })}
+          <p class="muted small center">${note}</p>
           <button type="button" class="btn-primary" data-act="save-weight">${t('weighSave')}</button>
           ${w ? `<button type="button" class="btn-text danger" data-act="remove-weight">${t('weighRemove')}</button>` : ''}
         </section>`;
     },
 
+    // Steps are typed in from the iPhone Health app: web apps cannot read Apple Health.
+    async steps() {
+      const date = state.date;
+      const isToday = date === todayKey();
+      const saved = await DB.getSteps(date);
+      const target = stepTarget(ageNow() ?? 18);
+      return `${topbar('today')}
+        <section class="screen">
+          <h1 tabindex="-1">${isToday ? t('stepsTitleToday') : t('stepsTitlePast', shortDate(date))}</h1>
+          <p class="muted">${t(PLATFORM === 'android' ? 'stepsHelpAndroid' : 'stepsHelp')}</p>
+          ${stepper({ id: 'steps-input', value: saved ? saved.count : 0, unit: t('stepsUnit'), step: 100, min: 0, max: STEPS_MAX, decimals: 0, label: t('stepsAria') })}
+          <p class="muted small center">${saved ? t('stepsNoteSaved', fmt(saved.count)) : ''}${t('stepsTarget', fmt(target))}</p>
+          <button type="button" class="btn-primary" data-act="save-steps">${t('stepsSave')}</button>
+          ${saved ? `<button type="button" class="btn-text danger" data-act="remove-steps">${t('stepsRemove')}</button>` : ''}
+        </section>`;
+    },
+
     async progress() {
-      const [foods, weights] = await Promise.all([DB.getAllFoods(), DB.getAllWeights()]);
-      const today = todayKey();
-
-      // Weight (weights come back sorted by date, their key)
-      const monthAgo = addDays(today, -30);
-      const recentW = weights.filter((w) => w.date >= monthAgo && w.date <= today);
-      let wSentence;
-      let wDetail;
-      if (!weights.length) {
-        wSentence = t('wNone');
-        wDetail = t('wNoneDetail');
-      } else if (recentW.length < 2) {
-        const last = weights[weights.length - 1];
-        wSentence = t('wLast', last.kg.toFixed(1));
-        wDetail = t('wLastDetail', shortDate(last.date));
-      } else {
-        const first = recentW[0];
-        const last = recentW[recentW.length - 1];
-        const diff = Math.round((last.kg - first.kg) * 10) / 10;
-        const since = shortDate(first.date);
-        if (diff < 0) wSentence = t('wLost', Math.abs(diff).toFixed(1), since);
-        else if (diff > 0) wSentence = t('wGained', diff.toFixed(1), since);
-        else wSentence = t('wSame', since);
-        wDetail = t('wFromTo', first.kg.toFixed(1), last.kg.toFixed(1));
-      }
-      const lastWeighIns = weights.slice(-5).reverse();
-      let bmiLine = '';
-      if (weights.length && state.heightCm) {
-        const bmi = bmiOf(weights[weights.length - 1].kg, state.heightCm);
-        const age = ageNow();
-        const [lo, hi] = targetBmi(age ?? 18);
-        bmiLine = `<p class="muted">${t('bmiLine', bmi.toFixed(1), t(`bmi_${bmiCategory(bmi)}`))}${age ? ` · ${t('bmiTargetShort', lo.toFixed(1), hi.toFixed(1))}` : ''}</p>`;
-      }
-
+      const [foods, weights, steps] = await Promise.all([DB.getAllFoods(), DB.getAllWeights(), DB.getAllSteps()]);
+      const period = progressPeriod(foods, weights, steps);
+      const stats = periodStats(period.dates, foods, weights);
       return `<section class="screen">
           <h1 class="xl" tabindex="-1">${t('progressTitle')}</h1>
           ${noticeHtml()}
-          ${calendarCard(foods, weights)}
-          <div class="card">
-            <div class="eyebrow">${t('yourWeight')}</div>
-            <p class="big-sentence">${wSentence}</p>
-            <p class="muted">${wDetail}</p>
-            ${bmiLine}
-            ${lastWeighIns.length ? `<ul class="kv">${lastWeighIns.map((w) => `<li><span>${dayLabel(w.date)}</span><span>${w.kg.toFixed(1)} kg</span></li>`).join('')}</ul>` : ''}
+          <div class="seg two" role="group" aria-label="${t('balModeAria')}">
+            ${['week', 'month'].map((mode) => `<button type="button" data-act="bal-mode" data-mode="${mode}" class="${state.balMode === mode ? 'on' : ''}" aria-pressed="${state.balMode === mode}">${t(mode === 'week' ? 'balWeek' : 'balMonth')}</button>`).join('')}
           </div>
+          <div class="period-nav">
+            <button type="button" class="icon-btn" data-act="bal-step" data-delta="-1" aria-label="${t('balPrev')}" ${period.atStart ? 'disabled' : ''}>${icon('back')}</button>
+            <h2 class="period-title" aria-live="polite">${period.title}</h2>
+            <button type="button" class="icon-btn" data-act="bal-step" data-delta="1" aria-label="${t('balNext')}" ${period.atEnd ? 'disabled' : ''}>${icon('next')}</button>
+          </div>
+          ${summaryCard(period, stats, foods, weights, steps)}
+          ${weightCard(weights)}
+          ${stepsCard(period, steps)}
+          ${infoBox(stats)}
         </section>`;
     },
 
@@ -844,9 +1117,10 @@
       let extra = '';
       if (state.advanced) {
         const storage = navigator.storage || {};
-        const [foodCount, weightCount, persisted, estimate] = await Promise.all([
+        const [foodCount, weightCount, stepsCount, persisted, estimate] = await Promise.all([
           DB.count('foods'),
           DB.count('weights'),
+          DB.count('steps'),
           storage.persisted ? storage.persisted().catch(() => null) : null,
           storage.estimate ? storage.estimate().catch(() => null) : null,
         ]);
@@ -855,6 +1129,7 @@
           [t('kvProtected'), persisted === true ? t('yes') : persisted === false ? t('no') : t('unknown')],
           [t('kvFoods'), fmt(foodCount)],
           [t('kvWeighIns'), fmt(weightCount)],
+          [t('kvSteps'), fmt(stepsCount)],
         ];
         if (estimate && estimate.usage !== undefined) rows.push([t('kvSpace'), `${(estimate.usage / 1024).toFixed(0)} KB`]);
         extra = `<div class="card">
@@ -868,11 +1143,11 @@
           <h1 class="xl" tabindex="-1">${t('moreTitle')}</h1>
           ${noticeHtml()}
           <div class="card list">
-            ${listRow('data-act="open-goal"', 't-pink', 'target', t('changeGoal'), t('goalNow', fmt(state.goal)))}
-            ${listRow('data-act="go" data-to="backup"', 't-amber', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
-            ${listRow('data-act="go" data-to="help"', 't-lavender', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
-            ${listRow('data-act="go" data-to="appearance"', 't-peach', 'contrast', t('appearance'), t(`theme_${state.theme}_title`))}
-            ${listRow(`data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}"`, 't-mint', 'globe', t('language'), `${t('langName')} → ${t('otherLangName')}`)}
+            ${listRow('data-act="open-goal"', 't-neutral', 'target', t('changeGoal'), t('goalNow', fmt(state.goal)))}
+            ${listRow('data-act="go" data-to="backup"', 't-neutral', 'shield', t('keepSafe'), lastBackup ? t('lastCopy', ago(lastBackup)) : t('noCopy'))}
+            ${listRow('data-act="go" data-to="help"', 't-neutral', 'phone', t('homeScreen'), isStandalone() ? t('alreadyDone') : t('stepByStep'))}
+            ${listRow('data-act="go" data-to="appearance"', 't-neutral', 'contrast', t('appearance'), t(`theme_${state.theme}_title`))}
+            ${listRow(`data-act="set-lang" data-lang="${I18N.lang === 'ja' ? 'en' : 'ja'}"`, 't-neutral', 'globe', t('language'), `${t('langName')} → ${t('otherLangName')}`)}
           </div>
           <button type="button" class="btn-text" data-act="toggle-advanced">${state.advanced ? t('hideExtra') : t('showExtra')}</button>
           ${extra}
@@ -883,24 +1158,19 @@
       const lastBackup = await DB.getSetting('lastBackup', null);
       const age = lastBackup ? (Date.now() - new Date(lastBackup).getTime()) / DAY_MS : Infinity;
       let status;
-      if (!lastBackup) status = `<div class="warnbox"><div class="box-title">${t('backupNotYet')}</div><div>${t('backupWeekly')}</div></div>`;
-      else if (age > BACKUP_REMINDER_DAYS) status = `<div class="warnbox"><div class="box-title">${t('backupLastTitle', ago(lastBackup))}</div><div>${t('backupWeekly')}</div></div>`;
+      if (!lastBackup) status = `<div class="warnbox"><div class="box-title">${t('backupNotYet')}</div></div>`;
+      else if (age > BACKUP_REMINDER_DAYS) status = `<div class="warnbox"><div class="box-title">${t('backupLastTitle', ago(lastBackup))}</div></div>`;
       else status = `<div class="okbox"><div class="box-title">${t('backupLastTitle', ago(lastBackup))}</div></div>`;
       return `${topbar('@prev')}
         <section class="screen">
           <h1 tabindex="-1">${t('backupScreenTitle')}</h1>
-          <p class="lead">${t('backupLead')}</p>
+          <p class="muted">${t('backupLead')}</p>
           ${status}
           ${noticeHtml()}
           <button type="button" class="btn-primary" data-act="export-json">${t('backupSaveNow')}</button>
-          <div class="card">
-            <div class="box-title">${t('backupNextTitle')}</div>
-            <p class="muted">${t('backupNextText')}</p>
-          </div>
-          <div class="card">
-            <div class="box-title">${t('backupRestoreTitle')}</div>
-            <p class="muted">${t('backupRestoreText')}</p>
-          </div>
+          <details class="info"><summary>${t('backupHowTitle')}</summary>
+            <div class="info-body"><p>${t(PLATFORM === 'android' ? 'backupNextTextAndroid' : 'backupNextText')}</p><p>${t('backupRestoreText')}</p></div>
+          </details>
         </section>`;
     },
 
@@ -920,18 +1190,27 @@
     },
 
     async help() {
-      const step = (n, body) => `<div class="card step-card"><span class="stepnum">${n}</span>${body}</div>`;
+      const os = state.helpOs || (PLATFORM === 'android' ? 'android' : 'ios');
+      // Step 2 shows the button to look for: Safari's Share icon, or Chrome's ⋮ menu.
+      const steps = os === 'ios'
+        ? [[t('helpIos1')], [t('helpIos2'), `<span class="share-pic">${icon('share')}</span>`], [t('helpIos3')], [t('helpIos4')]]
+        : [[t('helpAndroid1')], [t('helpAndroid2'), `<span class="share-pic android">${icon('dots')}</span>`], [t('helpAndroid3')], [t('helpAndroid4')]];
+      const oneTap = os === 'android' && installPrompt && !isStandalone()
+        ? `<button type="button" class="btn-primary" data-act="install-app">${icon('download')}${t('installNow')}</button>
+          <p class="muted small center">${t('installOrSteps')}</p>`
+        : '';
       return `${topbar('@prev')}
         <section class="screen">
           <h1 tabindex="-1">${t('helpTitle')}</h1>
           ${isStandalone()
             ? `<div class="okbox"><div class="box-title">${t('helpDoneTitle')}</div><div>${t('helpDoneText')}</div></div>`
             : `<p class="muted">${t('helpIntro')}</p>`}
+          <div class="seg two" role="group" aria-label="${t('helpOsAria')}">
+            ${[['ios', 'iPhone'], ['android', 'Android']].map(([k, label]) => `<button type="button" data-act="help-os" data-os="${k}" class="${os === k ? 'on' : ''}" aria-pressed="${os === k}">${label}</button>`).join('')}
+          </div>
+          ${oneTap}
           <div class="stack">
-            ${step(1, `<p>${t('help1')}</p>`)}
-            ${step(2, `<div class="stack"><p>${t('help2')}</p><span class="share-pic">${icon('share')}</span></div>`)}
-            ${step(3, `<p>${t('help3')}</p>`)}
-            ${step(4, `<p>${t('help4')}</p>`)}
+            ${steps.map(([text, pic], i) => `<div class="card step-card"><span class="stepnum">${i + 1}</span><div class="stack"><p>${text}</p>${pic || ''}</div></div>`).join('')}
           </div>
         </section>`;
     },
@@ -1149,6 +1428,11 @@
       if (!w || !isDate(w.date) || !Number.isFinite(w.kg) || w.kg <= 0) throw new Error(t('importWeightDamaged', i + 1));
       return { date: w.date, kg: w.kg, updatedAt: typeof w.updatedAt === 'string' ? w.updatedAt : `${w.date}T12:00:00` };
     });
+    // Backups made before steps existed have no "steps" list; that's fine.
+    const steps = (Array.isArray(d.steps) ? d.steps : []).map((s, i) => {
+      if (!s || !isDate(s.date) || !Number.isInteger(s.count) || s.count < 0 || s.count > STEPS_MAX) throw new Error(t('importStepsDamaged', i + 1));
+      return { date: s.date, count: s.count, updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : `${s.date}T12:00:00` };
+    });
     const settings = [{ key: 'onboarded', value: true }];
     const find = (key) => (d.settings || []).find((s) => s && s.key === key);
     const goal = find('goal');
@@ -1174,7 +1458,7 @@
     if (activity && ACTIVITY[activity.value] !== undefined) settings.push({ key: 'activity', value: activity.value });
     const goalWeight = find('goalWeight');
     if (goalWeight && Number.isFinite(goalWeight.value) && goalWeight.value > 0) settings.push({ key: 'goalWeight', value: goalWeight.value });
-    return { foods, weights, settings, exportedAt: d.exportedAt };
+    return { foods, weights, steps, settings, exportedAt: d.exportedAt };
   }
 
   async function importBackup(file) {
@@ -1213,7 +1497,20 @@
 
   // ---------- Button actions (data-act="...") ----------
   const actions = {
-    go: (el) => go(el.dataset.to === '@prev' ? (state.prev === 'today' ? 'today' : 'more') : el.dataset.to),
+    go: (el) => {
+      if (el.dataset.to !== '@prev') return go(el.dataset.to);
+      return go(['today', 'more', 'welcome'].includes(state.prev) ? state.prev : 'more');
+    },
+    'help-os': (el) => { state.helpOs = el.dataset.os; return render(); },
+    // Android Chrome: show the browser's own install dialog. Elsewhere, open the guide.
+    'install-app': async () => {
+      if (!installPrompt) return go('help');
+      const prompt = installPrompt;
+      installPrompt = null; // it can only be used once
+      prompt.prompt();
+      await prompt.userChoice.catch(() => null);
+      return render();
+    },
 
     tab: (el) => {
       if (el.dataset.to === 'today') state.date = todayKey();
@@ -1233,7 +1530,7 @@
       if (!Number.isFinite(v)) v = parseNum(input.defaultValue);
       if (!Number.isFinite(v)) v = Number(el.dataset.min);
       v = Math.min(Number(el.dataset.max), Math.max(Number(el.dataset.min), v + Number(el.dataset.delta)));
-      input.value = v.toFixed(dec);
+      input.value = dec ? v.toFixed(dec) : fmt(v);
       document.getElementById(`${input.id}-error`).hidden = true;
     },
 
@@ -1406,13 +1703,37 @@
       await go('today', { notice: { text: t('weightRemoved') } });
     },
 
+    // Steps
+    'save-steps': async () => {
+      const n = parseNum($('#steps-input').value);
+      if (!(Number.isInteger(n) && n >= 1 && n <= STEPS_MAX)) {
+        fieldError('steps-input', t('rangeError', 1, fmt(STEPS_MAX)));
+        return;
+      }
+      await DB.setSteps(state.date, n);
+      await go('today', { notice: { text: t('stepsSaved', fmt(n)) } });
+    },
+    'remove-steps': async () => {
+      const ok = await confirmDialog(t('removeStepsTitle'), t('removeStepsText', shortDate(state.date)), t('removeStepsYes'));
+      if (!ok) return;
+      await DB.deleteSteps(state.date);
+      await go('today', { notice: { text: t('stepsRemoved') } });
+    },
+
     // Progress / More
-    'cal-month': (el) => {
-      const [y, m] = state.calMonth.split('-').map(Number);
-      state.calMonth = toKey(new Date(y, m - 1 + Number(el.dataset.delta), 1)).slice(0, 7);
+    'cal-mode': (el) => { state.calMode = el.dataset.mode; return render(); },
+    // One 週/月 switch and one ‹ › for the whole progress screen.
+    'bal-mode': (el) => { state.balMode = el.dataset.mode; return render(); },
+    'bal-step': (el) => {
+      const delta = Number(el.dataset.delta);
+      if (state.balMode === 'week') {
+        state.balWeek = addDays(state.balWeek || mondayOf(todayKey()), delta * 7);
+      } else {
+        const [y, m] = state.calMonth.split('-').map(Number);
+        state.calMonth = toKey(new Date(y, m - 1 + delta, 1)).slice(0, 7);
+      }
       return render();
     },
-    'cal-mode': (el) => { state.calMode = el.dataset.mode; return render(); },
     'toggle-advanced': () => { state.advanced = !state.advanced; return render(); },
     // Changes straight away, so the person sees the new look while choosing.
     'pick-theme': async (el) => {

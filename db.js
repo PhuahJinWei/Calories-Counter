@@ -5,7 +5,9 @@
 // never says "Saved" for data that is not actually on disk.
 const DB = (() => {
   const NAME = 'calorie-tracker';
-  const VERSION = 1;
+  // v1: foods, weights, settings. v2: adds steps. Upgrades only ever ADD stores,
+  // so existing entries are kept when a phone moves to a newer version.
+  const VERSION = 2;
   let dbPromise;
 
   function open() {
@@ -27,6 +29,9 @@ const DB = (() => {
           }
           if (!db.objectStoreNames.contains('settings')) {
             db.createObjectStore('settings', { keyPath: 'key' });
+          }
+          if (!db.objectStoreNames.contains('steps')) {
+            db.createObjectStore('steps', { keyPath: 'date' });
           }
         };
         req.onsuccess = () => {
@@ -89,6 +94,13 @@ const DB = (() => {
       return holder;
     }).then((holder) => holder.value),
 
+    setSteps: (date, count) => run('steps', 'readwrite', (t) => {
+      t.objectStore('steps').put({ date, count, updatedAt: new Date().toISOString() });
+    }),
+    deleteSteps: (date) => run('steps', 'readwrite', (t) => { t.objectStore('steps').delete(date); }),
+    getSteps: (date) => run('steps', 'readonly', (t) => t.objectStore('steps').get(date)),
+    getAllSteps: () => getAll('steps'),
+
     count: (store) => run(store, 'readonly', (t) => t.objectStore(store).count()),
 
     getSetting: (key, fallback) => run('settings', 'readonly', (t) => t.objectStore('settings').get(key))
@@ -96,9 +108,10 @@ const DB = (() => {
     setSetting: (key, value) => run('settings', 'readwrite', (t) => { t.objectStore('settings').put({ key, value }); }),
 
     // One read transaction so the backup is a consistent snapshot.
-    exportAll: () => run(['foods', 'weights', 'settings'], 'readonly', (t) => ({
+    exportAll: () => run(['foods', 'weights', 'steps', 'settings'], 'readonly', (t) => ({
       foods: t.objectStore('foods').getAll(),
       weights: t.objectStore('weights').getAll(),
+      steps: t.objectStore('steps').getAll(),
       settings: t.objectStore('settings').getAll(),
     })).then((r) => ({
       app: 'calorie-tracker',
@@ -106,18 +119,23 @@ const DB = (() => {
       exportedAt: new Date().toISOString(),
       foods: r.foods.result,
       weights: r.weights.result,
+      steps: r.steps.result,
       settings: r.settings.result.filter((s) => s.key !== 'lastBackup'),
     })),
 
     // One write transaction: if any record fails, nothing is changed.
-    replaceAll: (data) => run(['foods', 'weights', 'settings'], 'readwrite', (t) => {
+    // Backups made before steps existed simply have no steps.
+    replaceAll: (data) => run(['foods', 'weights', 'steps', 'settings'], 'readwrite', (t) => {
       const foods = t.objectStore('foods');
       const weights = t.objectStore('weights');
+      const steps = t.objectStore('steps');
       const settings = t.objectStore('settings');
       foods.clear();
       weights.clear();
+      steps.clear();
       data.foods.forEach((f) => foods.put(f));
       data.weights.forEach((w) => weights.put(w));
+      (data.steps || []).forEach((s) => steps.put(s));
       data.settings.forEach((s) => settings.put(s));
     }),
   };

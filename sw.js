@@ -3,7 +3,7 @@
 //
 // When you change any app file, bump CACHE_VERSION so phones pick up the update
 // (it applies the next time the app is opened after the update downloads).
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v17';
 const CACHE = `calorie-tracker-${CACHE_VERSION}`;
 const ASSETS = [
   './',
@@ -17,6 +17,7 @@ const ASSETS = [
   './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
