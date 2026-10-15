@@ -1784,6 +1784,44 @@
     }
   });
 
+  // ---------- Number fields: the first key replaces the number ----------
+  // Tapping a number (weight, calories, steps…) marks it "ready to replace": it is
+  // highlighted, and the first digit typed replaces the whole number, so nobody has to
+  // delete it first. Backspace first clears it; tapping away without typing keeps it;
+  // tapping the number again goes back to normal editing. (Not the browser's select-all:
+  // on iPhone that is unreliable and brings up the Cut / Copy / Paste menu.)
+  const isNumberField = (el) => el instanceof HTMLInputElement && el.classList.contains('big-number');
+  const isReady = (el) => isNumberField(el) && el.classList.contains('replace-ready');
+
+  document.addEventListener('focusin', (e) => {
+    if (isNumberField(e.target)) e.target.classList.add('replace-ready');
+  });
+  document.addEventListener('focusout', (e) => {
+    if (isNumberField(e.target)) e.target.classList.remove('replace-ready');
+  });
+  // A tap on the number while it is already being edited = normal editing at that spot.
+  document.addEventListener('pointerdown', (e) => {
+    if (isReady(e.target) && document.activeElement === e.target) e.target.classList.remove('replace-ready');
+  });
+  // A keyboard that composes text (e.g. Japanese input) replaces the selection instead.
+  document.addEventListener('compositionstart', (e) => {
+    if (!isReady(e.target)) return;
+    e.target.classList.remove('replace-ready');
+    e.target.setSelectionRange(0, e.target.value.length);
+  });
+  document.addEventListener('beforeinput', (e) => {
+    const el = e.target;
+    if (!isReady(el) || e.inputType === 'insertLineBreak') return;
+    el.classList.remove('replace-ready');
+    const inserting = e.inputType.startsWith('insert');
+    if (!inserting && !e.inputType.startsWith('delete')) return; // e.g. undo: leave it to the browser
+    const text = inserting ? (e.data ?? (e.dataTransfer ? e.dataTransfer.getData('text/plain') : '') ?? '') : '';
+    e.preventDefault();
+    el.value = text;
+    el.setSelectionRange(text.length, text.length);
+    el.dispatchEvent(new Event('input', { bubbles: true })); // hides any error under the field
+  });
+
   // "Done" on the keyboard closes it. While a Japanese IME is still converting,
   // Enter confirms the kana/kanji instead, so leave that alone.
   document.addEventListener('keydown', (e) => {

@@ -312,6 +312,13 @@ button:disabled { opacity: .45; cursor: default; }
   font: inherit; font-size: 44px; font-weight: 700; line-height: 1.15; text-align: center;
   letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
   -webkit-appearance: none; appearance: none;
+  transition: background-color .15s, color .15s, border-radius .15s;
+}
+/* Just tapped: the next digit typed replaces the whole number (see app.js). */
+.big-number.replace-ready {
+  background: var(--accent-soft); color: var(--accent-soft-ink);
+  border-bottom-color: transparent; border-radius: 14px;
+  caret-color: transparent;
 }
 
 /* ---------- Messages ---------- */
