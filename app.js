@@ -78,7 +78,7 @@
     meal: defaultMeal(),
     food: null, // built-in food picked for the portion step
     query: '',
-    group: 'all', // food type chip on the food screen
+    collapsed: new Set(), // food-screen sections the user folded (saved in settings)
     mine: [], // the user's own past foods, most used first
     customName: '',
     entry: null, // logged food being edited
@@ -982,10 +982,10 @@
     },
 
     async food() {
-      const [allFoods, dishPrefs] = await Promise.all([DB.getAllFoods(), loadDishPrefs()]);
+      const [allFoods, dishPrefs, collapsed] = await Promise.all([DB.getAllFoods(), loadDishPrefs(), DB.getSetting('collapsed', [])]);
       state.mine = summarizeFoods(allFoods, dishPrefs);
+      state.collapsed = new Set(Array.isArray(collapsed) ? collapsed.filter((k) => typeof k === 'string') : []);
       const isToday = state.date === todayKey();
-      const groups = ['all', ...FOOD_GROUPS];
       return `${topbar('today')}
         <section class="screen">
           <h1 tabindex="-1">${t('foodTitle')}</h1>
@@ -997,9 +997,6 @@
             <input id="food-search" type="search" placeholder="${t('searchPlaceholder')}" aria-label="${t('searchLabel')}" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search">
           </label>
           <div id="food-top">${foodTop()}</div>
-          <div class="chips" role="group" aria-label="${t('categoriesAria')}">
-            ${groups.map((g) => `<button type="button" class="chip${state.group === g ? ' on' : ''}" data-act="pick-group" data-group="${g}" aria-pressed="${state.group === g}">${g === 'all' ? t('allFoods') : esc(groupName(g))}</button>`).join('')}
-          </div>
           <div id="food-results">${foodResults()}</div>
           <div class="sticky-foot">
             <button type="button" class="btn-primary" data-act="start-custom"><span class="plus-dot">${icon('plus')}</span>${t('typeItButton')}</button>
@@ -1319,6 +1316,21 @@
       <span class="add-dot" aria-hidden="true">${icon('plus')}</span>
     </button>`;
 
+  // A section on the food screen that can be folded away. Open by default; the app remembers
+  // which ones the user folded. `extra` sits beside the heading (e.g. the 編集 link).
+  function fold(key, title, count, body, extra = '') {
+    const closed = state.collapsed.has(key);
+    return `<section class="fold${closed ? ' closed' : ''}">
+        <div class="fold-head">
+          <button type="button" class="fold-toggle" data-act="toggle-fold" data-fold="${key}" aria-expanded="${!closed}" aria-controls="fold-${key}">
+            <span class="fold-title">${title}</span>${count ? `<span class="fold-count">${count}</span>` : ''}${icon('next', 'fold-chev')}
+          </button>
+          ${extra}
+        </div>
+        <div class="fold-body" id="fold-${key}"${closed ? ' hidden' : ''}>${body}</div>
+      </section>`;
+  }
+
   // Above the categories. Without a search: the user's own dishes. While searching: a row that
   // types the searched name in straight away, then the user's own dishes that match.
   function foodTop() {
@@ -1326,8 +1338,8 @@
     const q = norm(raw);
     if (!q) {
       const usual = state.mine.slice(0, 5);
-      return usual.length ? `<div class="section-head"><h2>${t('oftenHave')}</h2><button type="button" class="btn-text link-sm" data-act="go" data-to="dishes">${t('edit')}</button></div>
-        <div class="card list plain">${usual.map(mineRow).join('')}</div>` : '';
+      return usual.length ? fold('mine', t('oftenHave'), '', `<div class="card list plain">${usual.map(mineRow).join('')}</div>`,
+        `<button type="button" class="btn-text link-sm" data-act="go" data-to="dishes">${t('edit')}</button>`) : '';
     }
     const mine = state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q)).slice(0, 5);
     return `<div class="card list plain">
@@ -1343,8 +1355,6 @@
   // The built-in list (below the categories): short name, portion and calories underneath.
   function foodResults() {
     const q = norm(state.query);
-    const group = state.group;
-    const inGroup = (f) => group === 'all' || f.g === group;
     const builtRow = (f) => {
       const { title, detail } = splitFoodName(foodName(f));
       return `<button type="button" class="list-row" data-act="pick-food" data-idx="${FOODS.indexOf(f)}">
@@ -1353,11 +1363,13 @@
         </button>`;
     };
     if (!q) {
-      const shown = group === 'all' ? FOOD_GROUPS : [group];
-      return shown.map((g) => `<h2>${esc(groupName(g))}</h2><div class="card list plain">${FOODS.filter((f) => f.g === g).map(builtRow).join('')}</div>`).join('');
+      return FOOD_GROUPS.map((g) => {
+        const items = FOODS.filter((f) => f.g === g);
+        return fold(`g-${g}`, esc(groupName(g)), t('foodCount', items.length), `<div class="card list plain">${items.map(builtRow).join('')}</div>`);
+      }).join('');
     }
     const mineKeys = new Set(state.mine.filter((m) => m.key.includes(q)).map((m) => m.key));
-    const built = FOODS.filter((f) => inGroup(f) && f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
+    const built = FOODS.filter((f) => f.search.includes(q) && !mineKeys.has(norm(foodName(f))));
     return built.length ? `<h2>${t('matches')}</h2><div class="card list plain">${built.map(builtRow).join('')}</div>` : '';
   }
 
@@ -1742,8 +1754,8 @@
     },
 
     // Adding food
-    'start-add': (el) => go('food', { query: '', group: 'all', meal: el.dataset.meal || defaultMeal() }),
-    // Meal and food-type buttons on the food screen update in place, so the search box keeps its text.
+    'start-add': (el) => go('food', { query: '', meal: el.dataset.meal || defaultMeal() }),
+    // Meal buttons on the food screen update in place, so the search box keeps its text.
     'pick-meal': (el) => {
       state.meal = el.dataset.meal;
       $$('.seg button').forEach((b) => {
@@ -1752,14 +1764,15 @@
         b.setAttribute('aria-pressed', on);
       });
     },
-    'pick-group': (el) => {
-      state.group = el.dataset.group;
-      $$('.chips .chip').forEach((b) => {
-        const on = b.dataset.group === state.group;
-        b.classList.toggle('on', on);
-        b.setAttribute('aria-pressed', on);
-      });
-      $('#food-results').innerHTML = foodResults();
+    // Fold or unfold a section in place (keeps the scroll position and search text), and remember it.
+    'toggle-fold': (el) => {
+      const key = el.dataset.fold;
+      const closed = !state.collapsed.has(key);
+      if (closed) state.collapsed.add(key); else state.collapsed.delete(key);
+      el.setAttribute('aria-expanded', String(!closed));
+      el.closest('.fold').classList.toggle('closed', closed);
+      document.getElementById(`fold-${key}`).hidden = closed;
+      return DB.setSetting('collapsed', [...state.collapsed]);
     },
     'pick-food': (el) => {
       const food = FOODS[Number(el.dataset.idx)];
