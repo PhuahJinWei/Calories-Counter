@@ -76,6 +76,13 @@ const DB = (() => {
 
     addFood: (food) => run('foods', 'readwrite', (t) => t.objectStore('foods').add(food)),
     deleteFood: (id) => run('foods', 'readwrite', (t) => { t.objectStore('foods').delete(id); }),
+    // Save changes to one logged food (same id).
+    updateFood: (food) => run('foods', 'readwrite', (t) => { t.objectStore('foods').put(food); }),
+    // Save changes to several foods in one transaction (all or nothing), e.g. renaming a dish.
+    putFoods: (foods) => run('foods', 'readwrite', (t) => {
+      const store = t.objectStore('foods');
+      foods.forEach((f) => store.put(f));
+    }),
     getFood: (id) => run('foods', 'readonly', (t) => t.objectStore('foods').get(id)),
     getFoodsByDate: (date) => run('foods', 'readonly', (t) => t.objectStore('foods').index('date').getAll(date)),
     getAllFoods: () => getAll('foods'),

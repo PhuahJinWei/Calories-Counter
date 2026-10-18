@@ -138,6 +138,7 @@ b { font-weight: 600; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 6px; }
 .section-head h2 { margin: 0; }
+.btn-text.link-sm { min-height: 40px; font-size: 15px; }
 
 .card {
   background: var(--card);
@@ -523,14 +524,18 @@ button:disabled { opacity: .45; cursor: default; }
 .meal-items { padding: 0 16px 8px 72px; display: flex; flex-direction: column; }
 .food-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
 .food-item + .food-item { border-top: 1px solid var(--line); }
-.food-item-main { flex: 1; min-width: 0; }
+/* The whole food row (name + calories) is a button that opens the edit screen */
+.food-item-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start;
+  padding: 2px 0; border: 0; background: none; color: inherit; text-align: left; font: inherit;
+}
 .food-item-name { font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
 .food-item-sub { font-size: 14px; font-weight: 500; color: var(--muted); }
 /* Quiet remove button: a small × instead of a grey pill on every row. Undo is offered after removing. */
 .icon-remove {
   width: 40px; height: 40px; flex: none; margin-right: -8px;
   display: flex; align-items: center; justify-content: center;
-  border: 0; border-radius: 50%; background: none; color: var(--faint);
+  border: 0; border-radius: 50%; background: none; color: var(--muted);
 }
 .icon-remove .ic { width: 20px; height: 20px; stroke-width: 2.4; }
 .icon-remove:active { background: var(--fill); color: var(--ink); }

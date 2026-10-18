@@ -81,6 +81,8 @@
     group: 'all', // food type chip on the food screen
     mine: [], // the user's own past foods, most used first
     customName: '',
+    entry: null, // logged food being edited
+    dish: null, // own dish being edited
     notice: null, // { text, kind?, undo? }
     // My progress: one period for the whole screen
     balMode: 'week', // 'week' | 'month'
@@ -905,10 +907,10 @@
               <button type="button" class="mini-add" data-act="start-add" data-meal="${meal}" aria-label="${esc(t('addToMeal', mealName(meal)))}">${icon('plus')}</button>
             </div>
             ${items.length ? `<div class="meal-items">${items.map((f) => `<div class="food-item">
-                <div class="food-item-main">
-                  <div class="food-item-name">${esc(f.name)}</div>
-                  <div class="food-item-sub">${t('kcal', fmt(f.kcal))}${portionNote(f.portion) ? ` · ${esc(portionNote(f.portion))}` : ''}</div>
-                </div>
+                <button type="button" class="food-item-main" data-act="edit-entry" data-id="${f.id}" aria-label="${esc(t('editAria', f.name))}">
+                  <span class="food-item-name">${esc(f.name)}</span>
+                  <span class="food-item-sub">${t('kcal', fmt(f.kcal))}${portionNote(f.portion) ? ` · ${esc(portionNote(f.portion))}` : ''}</span>
+                </button>
                 <button type="button" class="icon-remove" data-act="remove" data-id="${f.id}" aria-label="${esc(t('removeAria', f.name))}">${icon('close')}</button>
               </div>`).join('')}</div>` : ''}
           </div>`;
@@ -980,7 +982,8 @@
     },
 
     async food() {
-      state.mine = summarizeFoods(await DB.getAllFoods());
+      const [allFoods, dishPrefs] = await Promise.all([DB.getAllFoods(), loadDishPrefs()]);
+      state.mine = summarizeFoods(allFoods, dishPrefs);
       const isToday = state.date === todayKey();
       const groups = ['all', ...FOOD_GROUPS];
       return `${topbar('today')}
@@ -1021,6 +1024,71 @@
         </section>`;
     },
 
+    // Edit one logged food: name, meal, calories; or delete it.
+    async entry() {
+      const f = state.entry;
+      if (!f) return SCREENS.today();
+      return `${topbar('today')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('entryTitle')}</h1>
+          ${f.date === todayKey() ? '' : `<p class="for-date">${longDate(f.date)}</p>`}
+          <div class="field">
+            <label class="label" for="entry-name">${t('entryName')}</label>
+            <input id="entry-name" class="input" type="text" maxlength="60" value="${esc(f.name)}" autocomplete="off" enterkeyhint="done">
+          </div>
+          <div class="field">
+            <div class="label">${t('entryMeal')}</div>
+            <div class="seg" role="group" aria-label="${t('mealPickerAria')}">
+              ${MEALS.map((m) => `<button type="button" data-act="pick-meal" data-meal="${m}" class="${m === state.meal ? 'on' : ''}" aria-pressed="${m === state.meal}">${mealName(m)}</button>`).join('')}
+            </div>
+          </div>
+          <div class="field">
+            <div class="label">${t('entryKcal')}</div>
+            ${kcalPicks('entry-kcal')}
+            ${stepper({ id: 'entry-kcal', value: f.kcal, unit: t('customUnit'), step: 50, min: 0, max: 10000, decimals: 0, label: t('customAria') })}
+          </div>
+          <button type="button" class="btn-primary" data-act="save-entry">${t('entrySave')}</button>
+          <button type="button" class="btn-text danger center" data-act="delete-entry">${t('entryDelete')}</button>
+        </section>`;
+    },
+
+    // All of the user's own dishes, to fix a name or the usual calories, or take one off the list.
+    async dishes() {
+      const [all, prefs] = await Promise.all([DB.getAllFoods(), loadDishPrefs()]);
+      state.mine = summarizeFoods(all, prefs);
+      return `${topbar('food')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('oftenHave')}</h1>
+          ${noticeHtml()}
+          <p class="muted">${t('dishesSub')}</p>
+          ${state.mine.length ? `<div class="card list plain">${state.mine.map((m, i) => `<button type="button" class="list-row" data-act="edit-dish" data-idx="${i}">
+              <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('dishSub', fmt(m.kcal), m.count)}</span></span>
+              ${icon('next')}
+            </button>`).join('')}</div>` : `<p class="sum-empty">${t('dishesEmpty')}</p>`}
+        </section>`;
+    },
+
+    async dish() {
+      const m = state.dish;
+      if (!m) return SCREENS.dishes();
+      return `${topbar('dishes')}
+        <section class="screen">
+          <h1 tabindex="-1">${t('dishTitle')}</h1>
+          <div class="field">
+            <label class="label" for="dish-name">${t('entryName')}</label>
+            <input id="dish-name" class="input" type="text" maxlength="60" value="${esc(m.name)}" autocomplete="off" enterkeyhint="done">
+            <p class="muted small">${t('dishRenameNote')}</p>
+          </div>
+          <div class="field">
+            <div class="label">${t('dishKcal')}</div>
+            ${kcalPicks('dish-kcal')}
+            ${stepper({ id: 'dish-kcal', value: m.kcal, unit: t('customUnit'), step: 50, min: 0, max: 10000, decimals: 0, label: t('dishKcal') })}
+          </div>
+          <button type="button" class="btn-primary" data-act="save-dish">${t('entrySave')}</button>
+          <button type="button" class="btn-text danger center" data-act="remove-dish">${t('dishRemove')}</button>
+        </section>`;
+    },
+
     async custom() {
       return `${topbar('food')}
         <section class="screen">
@@ -1031,11 +1099,7 @@
           </div>
           <div class="field">
             <div class="label">${t('customKcal')}</div>
-            <div class="kcal-picks" role="group" aria-label="${t('kcalPicksLabel')}">
-              ${KCAL_PICKS.map((p) => `<button type="button" class="kcal-pick" data-act="kcal-pick" data-kcal="${p.kcal}" aria-pressed="false">
-                  <span class="kcal-pick-name">${t(`pick_${p.key}`)}</span><span class="kcal-pick-v">${t('pickKcal', fmt(p.kcal))}</span>
-                </button>`).join('')}
-            </div>
+            ${kcalPicks('custom-kcal')}
             ${stepper({ id: 'custom-kcal', value: 300, unit: t('customUnit'), step: 50, min: 1, max: 10000, decimals: 0, label: t('customAria') })}
           </div>
           <button type="button" class="btn-primary" data-act="add-custom">${t('customAdd')}</button>
@@ -1206,8 +1270,17 @@
 
   const TABS = ['today', 'progress', 'more'];
 
+  // The user's choices about their own dishes, kept in settings (and in backups):
+  //   hidden: { key: ISO time it was taken off the list }  — it comes back if logged again later
+  //   kcal:   { key: usual calories }                        — used instead of "same as last time"
+  async function loadDishPrefs() {
+    const p = await DB.getSetting('dishes', null);
+    return { hidden: (p && p.hidden) || {}, kcal: (p && p.kcal) || {} };
+  }
+  const saveDishPrefs = (prefs) => DB.setSetting('dishes', prefs);
+
   // The user's own past foods, one per name (latest version), most used first.
-  function summarizeFoods(all) {
+  function summarizeFoods(all, prefs = { hidden: {}, kcal: {} }) {
     const byName = new Map();
     for (const f of all) {
       const key = norm(f.name);
@@ -1219,8 +1292,20 @@
         if (when >= e.last) Object.assign(e, { name: f.name, kcal: f.kcal, portion: f.portion, last: when });
       }
     }
-    return [...byName.values()].sort((a, b) => b.count - a.count || (b.last > a.last ? 1 : -1));
+    for (const e of byName.values()) {
+      if (prefs.kcal[e.key] !== undefined) { e.kcal = prefs.kcal[e.key]; e.portion = undefined; e.usual = true; }
+    }
+    return [...byName.values()]
+      .filter((e) => !(prefs.hidden[e.key] && e.last <= prefs.hidden[e.key]))
+      .sort((a, b) => b.count - a.count || (b.last > a.last ? 1 : -1));
   }
+
+  // The rough-size buttons (小皿 / 中皿 / 大皿 / 定食1食分) that fill a calorie field.
+  const kcalPicks = (target) => `<div class="kcal-picks" role="group" aria-label="${t('kcalPicksLabel')}">
+      ${KCAL_PICKS.map((p) => `<button type="button" class="kcal-pick" data-act="kcal-pick" data-target="${target}" data-kcal="${p.kcal}" aria-pressed="false">
+          <span class="kcal-pick-name">${t(`pick_${p.key}`)}</span><span class="kcal-pick-v">${t('pickKcal', fmt(p.kcal))}</span>
+        </button>`).join('')}
+    </div>`;
 
   // A built-in name like "ごはん（茶碗1杯）" shows as "ごはん" with "茶碗1杯・234 kcal" underneath.
   function splitFoodName(name) {
@@ -1230,7 +1315,7 @@
 
   // The user's own dishes (mostly home cooking): one tap adds them again, same as last time.
   const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
-      <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('sameAsLast', fmt(m.kcal))}</span></span>
+      <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t(m.usual ? 'usualKcal' : 'sameAsLast', fmt(m.kcal))}</span></span>
       <span class="add-dot" aria-hidden="true">${icon('plus')}</span>
     </button>`;
 
@@ -1241,7 +1326,8 @@
     const q = norm(raw);
     if (!q) {
       const usual = state.mine.slice(0, 5);
-      return usual.length ? `<h2>${t('oftenHave')}</h2><div class="card list plain">${usual.map(mineRow).join('')}</div>` : '';
+      return usual.length ? `<div class="section-head"><h2>${t('oftenHave')}</h2><button type="button" class="btn-text link-sm" data-act="go" data-to="dishes">${t('edit')}</button></div>
+        <div class="card list plain">${usual.map(mineRow).join('')}</div>` : '';
     }
     const mine = state.mine.map((m, i) => [m, i]).filter(([m]) => m.key.includes(q)).slice(0, 5);
     return `<div class="card list plain">
@@ -1459,6 +1545,14 @@
     if (activity && ACTIVITY[activity.value] !== undefined) settings.push({ key: 'activity', value: activity.value });
     const goalWeight = find('goalWeight');
     if (goalWeight && Number.isFinite(goalWeight.value) && goalWeight.value > 0) settings.push({ key: 'goalWeight', value: goalWeight.value });
+    const dishes = find('dishes');
+    if (dishes && dishes.value && typeof dishes.value === 'object') {
+      const hidden = {};
+      const kcal = {};
+      for (const [k, v] of Object.entries(dishes.value.hidden || {})) if (typeof v === 'string' && !Number.isNaN(Date.parse(v))) hidden[String(k).slice(0, 80)] = v;
+      for (const [k, v] of Object.entries(dishes.value.kcal || {})) if (Number.isInteger(v) && v >= 0 && v <= 10000) kcal[String(k).slice(0, 80)] = v;
+      settings.push({ key: 'dishes', value: { hidden, kcal } });
+    }
     return { foods, weights, steps, settings, exportedAt: d.exportedAt };
   }
 
@@ -1637,7 +1731,12 @@
       const u = state.notice && state.notice.undo;
       if (!u) return;
       if (u.type === 'add') await DB.deleteFood(u.id);
-      else await DB.addFood(u.food);
+      else if (u.type === 'edit') await DB.updateFood(u.food);
+      else if (u.type === 'unhide') {
+        const prefs = await loadDishPrefs();
+        delete prefs.hidden[u.key];
+        await saveDishPrefs(prefs);
+      } else await DB.addFood(u.food);
       state.notice = { text: t('undone') };
       await render();
     },
@@ -1676,10 +1775,67 @@
       return addEntry(m.name, m.kcal, m.portion);
     },
     'start-custom': () => go('custom', { customName: state.query.trim() }),
+
+    // Edit a logged food
+    'edit-entry': async (el) => {
+      const food = await DB.getFood(Number(el.dataset.id));
+      if (!food) return;
+      return go('entry', { entry: food, meal: food.meal });
+    },
+    'save-entry': async () => {
+      const before = state.entry;
+      const name = $('#entry-name').value.trim().slice(0, 60) || before.name;
+      const kcal = Math.round(parseNum($('#entry-kcal').value));
+      if (!(kcal >= 0 && kcal <= 10000)) {
+        fieldError('entry-kcal', t('rangeError', 0, fmt(10000)));
+        return;
+      }
+      const after = { ...before, name, kcal, meal: state.meal };
+      // A portion word (少なめ／多め) no longer fits once the name or calories are changed by hand.
+      if (name !== before.name || kcal !== before.kcal) delete after.portion;
+      await DB.updateFood(after);
+      return go('today', { entry: null, notice: { text: t('entrySaved', name), undo: { type: 'edit', food: before } } });
+    },
+    'delete-entry': async () => {
+      const food = state.entry;
+      await DB.deleteFood(food.id);
+      return go('today', { entry: null, notice: { text: t('removed', food.name), undo: { type: 'remove', food } } });
+    },
+
+    // Manage the user's own dishes
+    'edit-dish': (el) => go('dish', { dish: state.mine[Number(el.dataset.idx)] }),
+    'save-dish': async () => {
+      const m = state.dish;
+      const name = $('#dish-name').value.trim().slice(0, 60) || m.name;
+      const kcal = Math.round(parseNum($('#dish-kcal').value));
+      if (!(kcal >= 0 && kcal <= 10000)) {
+        fieldError('dish-kcal', t('rangeError', 0, fmt(10000)));
+        return;
+      }
+      const prefs = await loadDishPrefs();
+      const newKey = norm(name);
+      if (newKey !== m.key || name !== m.name) {
+        // Renaming fixes the name in past entries too (e.g. a typo), so it stays one dish.
+        const renamed = (await DB.getAllFoods()).filter((f) => norm(f.name) === m.key).map((f) => ({ ...f, name }));
+        await DB.putFoods(renamed);
+        delete prefs.kcal[m.key];
+        delete prefs.hidden[newKey];
+      }
+      prefs.kcal[newKey] = kcal;
+      await saveDishPrefs(prefs);
+      return go('dishes', { dish: null, notice: { text: t('dishSaved', name) } });
+    },
+    'remove-dish': async () => {
+      const m = state.dish;
+      const prefs = await loadDishPrefs();
+      prefs.hidden[m.key] = new Date().toISOString();
+      await saveDishPrefs(prefs);
+      return go('dishes', { dish: null, notice: { text: t('dishRemoved', m.name), undo: { type: 'unhide', key: m.key } } });
+    },
     'kcal-pick': (el) => {
-      const input = $('#custom-kcal');
-      input.value = fmt(Number(el.dataset.kcal));
-      $('#custom-kcal-error').hidden = true;
+      const id = el.dataset.target || 'custom-kcal';
+      $(`#${id}`).value = fmt(Number(el.dataset.kcal));
+      $(`#${id}-error`).hidden = true;
       $$('.kcal-pick').forEach((b) => {
         const on = b === el;
         b.classList.toggle('on', on);
