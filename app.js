@@ -83,6 +83,9 @@
     customName: '',
     entry: null, // logged food being edited
     dish: null, // own dish being edited
+    dishFrom: 'dishes', // where the dish editor returns to: 'dishes' or 'food'
+    selecting: false, // choosing several dishes in the 編集 list
+    selected: new Set(), // keys of the dishes chosen
     notice: null, // { text, kind?, undo? }
     // My progress: one period for the whole screen
     balMode: 'week', // 'week' | 'month'
@@ -985,11 +988,14 @@
       const [allFoods, dishPrefs, collapsed] = await Promise.all([DB.getAllFoods(), loadDishPrefs(), DB.getSetting('collapsed', [])]);
       state.mine = summarizeFoods(allFoods, dishPrefs);
       state.collapsed = new Set(Array.isArray(collapsed) ? collapsed.filter((k) => typeof k === 'string') : []);
+      state.selecting = false;
+      state.selected.clear();
       const isToday = state.date === todayKey();
       return `${topbar('today')}
         <section class="screen">
           <h1 tabindex="-1">${t('foodTitle')}</h1>
           ${isToday ? '' : `<p class="for-date">${t('forDate', shortDate(state.date))}</p>`}
+          ${noticeHtml()}
           <div class="seg" role="group" aria-label="${t('mealPickerAria')}">
             ${MEALS.map((m) => `<button type="button" data-act="pick-meal" data-meal="${m}" class="${m === state.meal ? 'on' : ''}" aria-pressed="${m === state.meal}">${mealName(m)}</button>`).join('')}
           </div>
@@ -1053,22 +1059,38 @@
     async dishes() {
       const [all, prefs] = await Promise.all([DB.getAllFoods(), loadDishPrefs()]);
       state.mine = summarizeFoods(all, prefs);
+      const keys = new Set(state.mine.map((m) => m.key));
+      for (const k of state.selected) if (!keys.has(k)) state.selected.delete(k);
+      const sel = state.selecting && state.mine.length > 0;
+      const n = state.selected.size;
+      const main = (m) => `<span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('dishSub', fmt(m.kcal), m.count)}</span></span>`;
+      // Normal: tap edits, long press starts selecting. Selecting: tap ticks or unticks.
+      const row = (m, i) => (sel
+        ? `<button type="button" class="list-row pick${state.selected.has(m.key) ? ' on' : ''}" data-act="toggle-pick" data-key="${esc(m.key)}" aria-pressed="${state.selected.has(m.key)}">
+            <span class="check" aria-hidden="true">${icon('check')}</span>${main(m)}
+          </button>`
+        : `<button type="button" class="list-row" data-act="edit-dish" data-idx="${i}" data-longpress="select" data-key="${esc(m.key)}">
+            ${main(m)}${icon('next')}
+          </button>`);
       return `${topbar('food')}
         <section class="screen">
-          <h1 tabindex="-1">${t('oftenHave')}</h1>
+          <div class="page-head">
+            <h1 tabindex="-1">${t('oftenHave')}</h1>
+            ${state.mine.length ? `<button type="button" class="btn-text link-sm" data-act="toggle-select">${t(sel ? 'cancelSelect' : 'select')}</button>` : ''}
+          </div>
           ${noticeHtml()}
-          <p class="muted">${t('dishesSub')}</p>
-          ${state.mine.length ? `<div class="card list plain">${state.mine.map((m, i) => `<button type="button" class="list-row" data-act="edit-dish" data-idx="${i}">
-              <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t('dishSub', fmt(m.kcal), m.count)}</span></span>
-              ${icon('next')}
-            </button>`).join('')}</div>` : `<p class="sum-empty">${t('dishesEmpty')}</p>`}
+          <p class="muted">${t(sel ? 'selectHint' : 'dishesSub')}</p>
+          ${state.mine.length ? `<div class="card list plain">${state.mine.map(row).join('')}</div>` : `<p class="sum-empty">${t('dishesEmpty')}</p>`}
+          ${sel ? `<div class="sticky-foot">
+            <button type="button" class="btn-primary danger" data-act="remove-selected"${n ? '' : ' disabled'}>${n ? t('removeSelected', n) : t('dishRemove')}</button>
+          </div>` : ''}
         </section>`;
     },
 
     async dish() {
       const m = state.dish;
       if (!m) return SCREENS.dishes();
-      return `${topbar('dishes')}
+      return `${topbar(state.dishFrom === 'food' ? 'food' : 'dishes')}
         <section class="screen">
           <h1 tabindex="-1">${t('dishTitle')}</h1>
           <div class="field">
@@ -1311,7 +1333,7 @@
   }
 
   // The user's own dishes (mostly home cooking): one tap adds them again, same as last time.
-  const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
+  const mineRow = (m, i) => `<button type="button" class="list-row" data-act="add-again" data-idx="${i}" data-longpress="edit-dish" data-key="${esc(m.key)}" aria-label="${esc(t('addAgainAria', m.name, fmt(m.kcal)))}">
       <span class="list-main"><span class="list-title">${esc(m.name)}</span><span class="list-sub">${t(m.usual ? 'usualKcal' : 'sameAsLast', fmt(m.kcal))}</span></span>
       <span class="add-dot" aria-hidden="true">${icon('plus')}</span>
     </button>`;
@@ -1746,7 +1768,7 @@
       else if (u.type === 'edit') await DB.updateFood(u.food);
       else if (u.type === 'unhide') {
         const prefs = await loadDishPrefs();
-        delete prefs.hidden[u.key];
+        for (const k of u.keys || [u.key]) delete prefs.hidden[k];
         await saveDishPrefs(prefs);
       } else await DB.addFood(u.food);
       state.notice = { text: t('undone') };
@@ -1816,7 +1838,34 @@
     },
 
     // Manage the user's own dishes
-    'edit-dish': (el) => go('dish', { dish: state.mine[Number(el.dataset.idx)] }),
+    'edit-dish': (el) => {
+      const dish = el.dataset.key ? state.mine.find((m) => m.key === el.dataset.key) : state.mine[Number(el.dataset.idx)];
+      if (!dish) return;
+      return go('dish', { dish, dishFrom: state.screen === 'food' ? 'food' : 'dishes' });
+    },
+    'toggle-select': () => {
+      state.selecting = !state.selecting;
+      state.selected.clear();
+      return render();
+    },
+    'toggle-pick': (el) => {
+      const key = el.dataset.key;
+      if (state.selected.has(key)) state.selected.delete(key); else state.selected.add(key);
+      return render();
+    },
+    // Take the chosen dishes off the list (the diary is not touched). One Undo brings them all back.
+    'remove-selected': async () => {
+      const keys = [...state.selected];
+      if (!keys.length) return;
+      const prefs = await loadDishPrefs();
+      const now = new Date().toISOString();
+      keys.forEach((k) => { prefs.hidden[k] = now; });
+      await saveDishPrefs(prefs);
+      state.selecting = false;
+      state.selected.clear();
+      state.notice = { text: t('dishesRemoved', keys.length), undo: { type: 'unhide', keys } };
+      return render();
+    },
     'save-dish': async () => {
       const m = state.dish;
       const name = $('#dish-name').value.trim().slice(0, 60) || m.name;
@@ -1836,14 +1885,14 @@
       }
       prefs.kcal[newKey] = kcal;
       await saveDishPrefs(prefs);
-      return go('dishes', { dish: null, notice: { text: t('dishSaved', name) } });
+      return go(state.dishFrom === 'food' ? 'food' : 'dishes', { dish: null, notice: { text: t('dishSaved', name) } });
     },
     'remove-dish': async () => {
       const m = state.dish;
       const prefs = await loadDishPrefs();
       prefs.hidden[m.key] = new Date().toISOString();
       await saveDishPrefs(prefs);
-      return go('dishes', { dish: null, notice: { text: t('dishRemoved', m.name), undo: { type: 'unhide', key: m.key } } });
+      return go(state.dishFrom === 'food' ? 'food' : 'dishes', { dish: null, notice: { text: t('dishRemoved', m.name), undo: { type: 'unhide', key: m.key } } });
     },
     'kcal-pick': (el) => {
       const id = el.dataset.target || 'custom-kcal';
@@ -1928,7 +1977,12 @@
 
   // ---------- Events ----------
   let working = false; // ignore extra taps while a save is in progress
+  // The click the browser sends as the finger lifts after a long press: right away, at the same spot.
+  let swallow = null;
   document.addEventListener('click', (e) => {
+    if (swallow && Date.now() < swallow.until && Math.hypot(e.clientX - swallow.x, e.clientY - swallow.y) < 30) {
+      swallow = null; e.preventDefault(); return;
+    }
     const el = e.target.closest('[data-act]');
     if (!el || el.disabled || working) return;
     const fn = actions[el.dataset.act];
@@ -1939,6 +1993,47 @@
       .catch(showError)
       .finally(() => { working = false; });
   });
+
+  // Long press (half a second) on rows marked data-longpress. Always a shortcut, never the only way:
+  //  - "select":    in the 編集 list, start selecting with this dish ticked (the 選択 button also does)
+  //  - "edit-dish": on the food screen, edit this dish (a tap adds it; the 編集 link also leads here)
+  const LONG_PRESS_MS = 500;
+  let pressTimer = null;
+  let pressStart = null;
+  let pressFired = false;
+  const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
+  document.addEventListener('pointerdown', (e) => {
+    pressFired = false;
+    swallow = null;
+    const el = e.target.closest('[data-longpress]');
+    if (!el || working) return;
+    pressStart = { x: e.clientX, y: e.clientY };
+    cancelPress();
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      pressFired = true;
+      // A small buzz on Android; iPhone has no vibration for web pages.
+      if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(10);
+      const run = el.dataset.longpress === 'select'
+        ? () => { state.selecting = true; state.selected = new Set([el.dataset.key]); return render(); }
+        : () => actions['edit-dish'](el);
+      working = true;
+      Promise.resolve().then(run).catch(showError).finally(() => { working = false; });
+    }, LONG_PRESS_MS);
+  });
+  // Moving the finger (scrolling) or lifting it early cancels the long press.
+  document.addEventListener('pointermove', (e) => {
+    if (pressTimer && Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > 10) cancelPress();
+  });
+  // Lifting the finger after a long press: ignore only the click that comes with it.
+  document.addEventListener('pointerup', (e) => {
+    cancelPress();
+    if (pressFired) { pressFired = false; swallow = { until: Date.now() + 400, x: e.clientX, y: e.clientY }; }
+  });
+  document.addEventListener('pointercancel', cancelPress);
+  window.addEventListener('scroll', cancelPress, { passive: true });
+  // Android opens a menu on long press; neither that nor text selection should happen on these rows.
+  document.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-longpress]')) e.preventDefault(); });
 
   document.addEventListener('input', (e) => {
     if (e.target.id === 'food-search') {
